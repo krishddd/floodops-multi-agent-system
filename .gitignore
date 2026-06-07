@@ -1,0 +1,51 @@
+# For now only README.md should be tracked. Everything else is in-progress.
+*
+!.gitignore
+!README.md
+
+# When development starts, replace the wildcards above with normal rules.
+# Suggested baseline for when you uncomment work:
+#
+# # Python
+# __pycache__/
+# *.py[cod]
+# *.egg-info/
+# .pytest_cache/
+# .mypy_cache/
+# .ruff_cache/
+# venv/
+# .venv/
+# env/
+#
+# # Node
+# node_modules/
+# dist/
+# .vite/
+#
+# # IDE / Claude
+# .claude/
+# .idea/
+# .vscode/
+#
+# # Secrets
+# .env
+# .env.*
+# !.env.example
+# *.pem
+# *.key
+# client_secret*.json
+# credentials.json
+# token.json
+# service-account*.json
+#
+# # Generated / large
+# logs/
+# *.log
+# *.sqlite3
+# *.duckdb
+# *.docx
+# *.pdf
+#
+# # OS
+# .DS_Store
+# Thumbs.db
