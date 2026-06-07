@@ -1,0 +1,21 @@
+{
+  "name": "floodops-frontend",
+  "version": "1.0.0",
+  "description": "FloodOps — 3D Temporal Flood Exploration Tool",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@deck.gl/core": "^9.1.0",
+    "@deck.gl/layers": "^9.1.0",
+    "@deck.gl/google-maps": "^9.1.0",
+    "@deck.gl/aggregation-layers": "^9.1.0",
+    "@luma.gl/core": "^9.1.0"
+  },
+  "devDependencies": {
+    "vite": "^6.3.0"
+  }
+}

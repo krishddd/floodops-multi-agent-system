@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FloodOps — Real-Time Flood Intelligence</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- FULL-VIEWPORT MAP CONTAINER                     -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div id="map-container"></div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- TOP BAR — Logo + Phase Bar + Auth               -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <header id="top-bar" class="glass-panel">
+    <div class="top-bar__left">
+      <div class="logo">
+        <svg class="logo__icon" viewBox="0 0 32 32" width="28" height="28">
+          <path d="M16 2C16 2 6 15 6 21C6 26.523 10.477 31 16 31C21.523 31 26 26.523 26 21C26 15 16 2 16 2Z" fill="url(#logoGrad)"/>
+          <defs><linearGradient id="logoGrad" x1="16" y1="2" x2="16" y2="31" gradientUnits="userSpaceOnUse"><stop stop-color="#60a5fa"/><stop offset="1" stop-color="#3b82f6"/></linearGradient></defs>
+        </svg>
+        <span class="logo__text">Flood<span class="logo__accent">Ops</span></span>
+      </div>
+      <div id="phase-bar" class="phase-bar"></div>
+    </div>
+    <div class="top-bar__right">
+      <div id="data-cadence" class="data-cadence"></div>
+      <div id="auth-status" class="auth-status">
+        <button id="auth-btn" class="btn btn--ghost">Sign In</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- LEFT PANEL — Layers + Metrics                   -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <aside id="left-panel" class="glass-panel side-panel side-panel--left">
+    <div id="metrics-panel" class="metrics-panel"></div>
+    <div class="panel-divider"></div>
+    <div id="layer-panel" class="layer-panel"></div>
+  </aside>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- RIGHT PANEL — Ensemble + Scenarios              -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <aside id="right-panel" class="glass-panel side-panel side-panel--right">
+    <div id="ensemble-panel" class="ensemble-panel">
+      <h3 class="panel-title">Ensemble Analysis</h3>
+      <div id="member-selector" class="member-selector"></div>
+      <div id="disagreement-badges" class="disagreement-badges"></div>
+      <canvas id="probability-fan-canvas" class="probability-fan-canvas" width="320" height="200"></canvas>
+    </div>
+    <div class="panel-divider"></div>
+    <div id="scenario-panel" class="scenario-panel">
+      <h3 class="panel-title">What-If Scenarios</h3>
+      <div id="scenario-controls"></div>
+    </div>
+  </aside>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- BOTTOM — Timeline Scrubber                      -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div id="timeline-bar" class="glass-panel timeline-bar">
+    <div class="timeline-bar__controls">
+      <button id="timeline-play" class="btn btn--icon" aria-label="Play/Pause">
+        <svg id="play-icon" viewBox="0 0 24 24" width="20" height="20"><polygon points="5,3 19,12 5,21" fill="currentColor"/></svg>
+        <svg id="pause-icon" viewBox="0 0 24 24" width="20" height="20" style="display:none"><rect x="5" y="3" width="4" height="18" fill="currentColor"/><rect x="15" y="3" width="4" height="18" fill="currentColor"/></svg>
+      </button>
+      <button id="timeline-speed" class="btn btn--ghost btn--sm speed-btn">1×</button>
+    </div>
+    <div class="timeline-bar__scrubber">
+      <span id="timeline-label-start" class="timeline-label mono">T-72h</span>
+      <div class="scrubber-track">
+        <input type="range" id="timeline-slider" min="0" max="1000" value="440" step="1" />
+        <div id="scrubber-fill" class="scrubber-fill"></div>
+        <div id="scrubber-now-marker" class="scrubber-now-marker" title="Now"></div>
+      </div>
+      <span id="timeline-label-end" class="timeline-label mono">T+10d</span>
+    </div>
+    <div id="timeline-current" class="timeline-current mono"></div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- WHY CARD (anchored to map features)             -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div id="why-card-container" class="why-card-container"></div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- CHAT DRAWER                                     -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <button id="chat-toggle" class="btn btn--fab chat-toggle" aria-label="Open AI Chat">
+    <svg viewBox="0 0 24 24" width="22" height="22"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z" fill="currentColor"/></svg>
+  </button>
+  <div id="chat-drawer" class="glass-panel chat-drawer chat-drawer--hidden">
+    <div class="chat-drawer__header">
+      <h3 class="panel-title">FloodOps AI</h3>
+      <button id="chat-close" class="btn btn--icon btn--sm" aria-label="Close">✕</button>
+    </div>
+    <div id="chat-messages" class="chat-messages"></div>
+    <div class="chat-input-bar">
+      <input id="chat-input" type="text" class="chat-input" placeholder="Ask about flood conditions…" />
+      <button id="chat-send" class="btn btn--primary btn--sm">Send</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- SCENARIO DIFF OVERLAY                           -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div id="diff-overlay" class="diff-overlay diff-overlay--hidden">
+    <div class="diff-overlay__header glass-panel">
+      <span class="diff-label">Scenario Comparison</span>
+      <div class="diff-mode-toggle">
+        <button class="btn btn--sm diff-mode-btn active" data-mode="overlay">Overlay</button>
+        <button class="btn btn--sm diff-mode-btn" data-mode="split">Split</button>
+      </div>
+      <button id="diff-close" class="btn btn--icon btn--sm">✕</button>
+    </div>
+    <div id="diff-slider-container" class="diff-slider-container">
+      <input type="range" id="diff-slider" min="0" max="100" value="50" />
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════ -->
+  <!-- LOADING SCREEN                                  -->
+  <!-- ═══════════════════════════════════════════════ -->
+  <div id="loading-screen" class="loading-screen">
+    <div class="loading-screen__content">
+      <svg class="loading-drop" viewBox="0 0 64 64" width="64" height="64">
+        <path d="M32 4C32 4 12 30 12 42C12 53 21 62 32 62C43 62 52 53 52 42C52 30 32 4 32 4Z" fill="url(#loadGrad)"/>
+        <defs><linearGradient id="loadGrad" x1="32" y1="4" x2="32" y2="62"><stop stop-color="#60a5fa"/><stop offset="1" stop-color="#1e40af"/></linearGradient></defs>
+      </svg>
+      <h2 class="loading-text">FloodOps</h2>
+      <p class="loading-sub">Initializing flood intelligence…</p>
+      <div class="loading-bar"><div class="loading-bar__fill"></div></div>
+    </div>
+  </div>
+
+  <!-- Google Maps API (loaded async) -->
+  <script>
+    (g=>{var h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",m=document,b=window;b=b[c]||(b[c]={});var d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,u=()=>h||(h=new Promise(async(f,n)=>{await (a=m.createElement("script"));e.set("libraries","places,marker");e.set("callback",c+".maps."+q);a.src=`https://maps.googleapis.com/maps/api/js?`+e;d[q]=f;a.onerror=()=>h=n(Error(p+" could not load."));a.nonce=m.querySelector("script[nonce]")?.nonce||"";m.head.append(a)}));d[l]?console.warn(p+" only loads once."):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))})();
+  </script>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

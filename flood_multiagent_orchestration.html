@@ -1,0 +1,117 @@
+
+<h2 class="sr-only">Step-by-step multi-agent flood orchestration: seven phases from continuous monitoring through recovery, combining flash flood warning, urban risk, post-flood disease, and glacial lake outburst response</h2>
+<style>
+.ac{display:inline-flex;align-items:center;gap:3px;font-size:10px;padding:2px 8px;border-radius:4px;font-weight:500}
+.lbl{font-size:9px;letter-spacing:.05em;color:var(--color-text-tertiary);margin-bottom:4px;font-weight:500}
+.out{font-size:11px;display:flex;align-items:baseline;gap:5px;padding:3px 0;line-height:1.4;border-bottom:0.5px solid var(--color-border-tertiary);color:var(--color-text-secondary)}
+.out:last-child{border-bottom:none}
+</style>
+
+<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
+  <span style="font-size:11px;padding:3px 10px;border-radius:20px;background:#E1F5EE;color:#04342C;display:inline-flex;align-items:center;gap:4px;font-weight:500"><i class="ti ti-bolt" aria-hidden="true" style="font-size:11px"></i>Flash flood warning</span>
+  <span style="font-size:11px;padding:3px 10px;border-radius:20px;background:#FAEEDA;color:#412402;display:inline-flex;align-items:center;gap:4px;font-weight:500"><i class="ti ti-building" aria-hidden="true" style="font-size:11px"></i>Urban flood risk</span>
+  <span style="font-size:11px;padding:3px 10px;border-radius:20px;background:#FBEAF0;color:#4B1528;display:inline-flex;align-items:center;gap:4px;font-weight:500"><i class="ti ti-virus" aria-hidden="true" style="font-size:11px"></i>Post-flood disease</span>
+  <span style="font-size:11px;padding:3px 10px;border-radius:20px;background:#EEEDFE;color:#26215C;display:inline-flex;align-items:center;gap:4px;font-weight:500"><i class="ti ti-mountain" aria-hidden="true" style="font-size:11px"></i>Glacial lake outbursts</span>
+  <span style="font-size:11px;color:var(--color-text-tertiary)">→ one orchestration</span>
+</div>
+
+<div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:16px;padding:8px 12px;background:var(--color-background-secondary);border-radius:var(--border-radius-md);border:0.5px solid var(--color-border-tertiary);align-items:center">
+  <span class="lbl" style="margin-bottom:0;margin-right:4px">7 agents</span>
+  <span class="ac" style="background:#E6F1FB;color:#0C447C"><i class="ti ti-satellite" style="font-size:10px" aria-hidden="true"></i>SentinelAgent</span>
+  <span class="ac" style="background:#E1F5EE;color:#04342C"><i class="ti ti-mountain" style="font-size:10px" aria-hidden="true"></i>GLOFAgent</span>
+  <span class="ac" style="background:#FAEEDA;color:#633806"><i class="ti ti-building" style="font-size:10px" aria-hidden="true"></i>UrbanRiskAgent</span>
+  <span class="ac" style="background:#EEEDFE;color:#26215C"><i class="ti ti-brain" style="font-size:10px" aria-hidden="true"></i>FloodPredictAgent</span>
+  <span class="ac" style="background:#FCEBEB;color:#501313"><i class="ti ti-bell-ringing" style="font-size:10px" aria-hidden="true"></i>AlertAgent</span>
+  <span class="ac" style="background:#FAECE7;color:#4A1B0C"><i class="ti ti-truck" style="font-size:10px" aria-hidden="true"></i>ResourceAgent</span>
+  <span class="ac" style="background:#FBEAF0;color:#4B1528"><i class="ti ti-virus" style="font-size:10px" aria-hidden="true"></i>DiseaseRiskAgent</span>
+</div>
+
+<div id="phases"></div>
+
+<script>
+const PROBLEM_S={"Flash flood":{bg:"#E1F5EE",col:"#04342C"},"Urban risk":{bg:"#FAEEDA",col:"#412402"},"Post-flood disease":{bg:"#FBEAF0",col:"#4B1528"},"Glacial lake":{bg:"#EEEDFE",col:"#26215C"}};
+
+const phases=[
+  {n:"00",name:"Continuous monitoring",timing:"24/7 · 365 days",accent:"#0F6E56",bg:"#E1F5EE",bdr:"#9FE1CB",tc:"#04342C",
+   trigger:"System default. Always on. No threshold needed.",
+   agents:[{n:"SentinelAgent",bg:"#E6F1FB",c:"#0C447C"},{n:"GLOFAgent",bg:"#E1F5EE",c:"#04342C"},{n:"UrbanRiskAgent",bg:"#FAEEDA",c:"#633806"}],
+   actions:"SentinelAgent polls rainfall radar, river gauges, and soil moisture every 15 min. GLOFAgent scans glacial lake volumes on each 6-day Sentinel-2 satellite pass and flags any dam integrity degradation. UrbanRiskAgent continuously recalculates city flood risk layers as rainfall baseline patterns shift seasonally.",
+   outputs:["Baseline metrics and anomaly detection","Glacial lake health scores","Updated urban flood risk maps (weekly)"],
+   probs:["Flash flood","Glacial lake","Urban risk"],
+   trans:"Rainfall > 150% of 30-day average OR glacial lake rise > 20 cm/day"},
+  {n:"01",name:"Elevated risk",timing:"T−72h to T−48h",accent:"#854F0B",bg:"#FAEEDA",bdr:"#EF9F27",tc:"#412402",
+   trigger:"SentinelAgent or GLOFAgent raises anomaly flag above configured threshold.",
+   agents:[{n:"SentinelAgent",bg:"#E6F1FB",c:"#0C447C"},{n:"GLOFAgent",bg:"#E1F5EE",c:"#04342C"},{n:"FloodPredictAgent",bg:"#EEEDFE",c:"#26215C"}],
+   actions:"FloodPredictAgent runs 10,000-scenario ensemble flood model combining rainfall forecast, watershed topography, and river network. GLOFAgent escalates to hourly SAR overpass requests. Outputs go to emergency agencies only — no public alert issued yet. Confidence bounds are included in all outputs.",
+   outputs:["Risk bulletin → emergency agencies (not public)","GLOF structural integrity score","72-hour probabilistic flood maps"],
+   probs:["Flash flood","Glacial lake"],
+   trans:"FloodPredictAgent gives > 70% flood probability within 24 hours"},
+  {n:"02",name:"Imminent threat",timing:"T−12h to T−24h",accent:"#633806",bg:"#FAEEDA",bdr:"#BA7517",tc:"#412402",
+   trigger:"FloodPredictAgent reports > 70% flood probability within 24 hours.",
+   agents:[{n:"SentinelAgent",bg:"#E6F1FB",c:"#0C447C"},{n:"FloodPredictAgent",bg:"#EEEDFE",c:"#26215C"},{n:"UrbanRiskAgent",bg:"#FAEEDA",c:"#633806"},{n:"ResourceAgent",bg:"#FAECE7",c:"#4A1B0C"}],
+   actions:"UrbanRiskAgent maps inundation path to street level — every building and population count in the projected flood path. ResourceAgent begins physically moving medical supplies, water purification tablets, and ORS sachets to pre-staged locations outside the flood zone. Evacuation routes calculated but not yet published.",
+   outputs:["Zone-level alerts to local emergency offices","Supply pre-positioning movement orders","Evacuation routes (internal, not yet public)","At-risk population count by zone"],
+   probs:["Flash flood","Urban risk","Glacial lake"],
+   trans:"Probability > 90% OR GLOF breach confirmed by lake sensor"},
+  {n:"03",name:"Evacuation order",timing:"T−2h to T−6h",accent:"#A32D2D",bg:"#FCEBEB",bdr:"#F09595",tc:"#501313",
+   trigger:"Flood probability > 90% OR GLOF breach detected by automated sensor.",
+   agents:[{n:"AlertAgent",bg:"#FCEBEB",c:"#501313"},{n:"UrbanRiskAgent",bg:"#FAEEDA",c:"#633806"},{n:"ResourceAgent",bg:"#FAECE7",c:"#4A1B0C"},{n:"FloodPredictAgent",bg:"#EEEDFE",c:"#26215C"}],
+   actions:"AlertAgent fires all channels simultaneously: SMS to every mobile number in the flood zone, radio broadcast scripts localized to 3+ languages, automated siren activation codes sent to municipal systems. UrbanRiskAgent provides live routing showing which roads remain passable as the flood front approaches. Shelters opened and mapped.",
+   outputs:["Mass SMS to all phones in flood zone","Radio broadcast (local languages)","Live evacuation route map","Shelter locations and capacity","Flood front ETA by neighborhood"],
+   probs:["Flash flood","Urban risk","Glacial lake"],
+   trans:"Flood event begins — gauge breach OR SAR confirms inundation"},
+  {n:"04",name:"Active flood",timing:"T=0 to T+24h",accent:"#791F1F",bg:"#FCEBEB",bdr:"#F7C1C1",tc:"#501313",
+   trigger:"River gauge breach confirmed OR inundation detected by Sentinel-1 SAR radar.",
+   agents:[{n:"SentinelAgent",bg:"#E6F1FB",c:"#0C447C"},{n:"AlertAgent",bg:"#FCEBEB",c:"#501313"},{n:"ResourceAgent",bg:"#FAECE7",c:"#4A1B0C"}],
+   actions:"SentinelAgent switches to Sentinel-1 SAR (penetrates clouds and rain) to map real-time flood extent every 6 hours. AlertAgent continuously updates safe/unsafe zone boundaries as water spreads into the city. ResourceAgent coordinates rescue boat routes to trapped populations using flood extent, building density, and vulnerability overlays.",
+   outputs:["Live flood extent map (SAR, every 6h)","Dynamic safe/unsafe zone boundaries","Rescue routing to trapped populations","Real-time floodwater velocity estimates"],
+   probs:["Flash flood","Urban risk"],
+   trans:"Peak water receding — gauge levels dropping for 4+ consecutive hours"},
+  {n:"05",name:"Post-flood response",timing:"T+24h to T+14 days",accent:"#993C1D",bg:"#FAECE7",bdr:"#F5C4B3",tc:"#4A1B0C",
+   trigger:"Peak flood receding. Sentinel-1 confirms water levels dropping across the zone.",
+   agents:[{n:"DiseaseRiskAgent",bg:"#FBEAF0",c:"#4B1528"},{n:"ResourceAgent",bg:"#FAECE7",c:"#4A1B0C"},{n:"SentinelAgent",bg:"#E6F1FB",c:"#0C447C"}],
+   actions:"DiseaseRiskAgent predicts cholera, typhoid, and leptospirosis outbreak probability at 100m grid resolution using: flood depth and duration, population density, pre-existing sanitation gaps, water source contamination model, and analogous historical outbreak patterns. ResourceAgent pre-positions ORS, antibiotics, and water purification at predicted hotspots before any symptoms appear — the 5–7 day incubation window is the only intervention opportunity.",
+   outputs:["Disease risk map by neighborhood (5-day forecast)","Medical supply pre-positioning orders","Contaminated water zone warnings","7-day outbreak probability forecast by pathogen"],
+   probs:["Post-flood disease"],
+   trans:"Outbreak risk falls below threshold. Infrastructure assessment complete."},
+  {n:"06",name:"Recovery and rebuild",timing:"T+14 days onwards",accent:"#0F6E56",bg:"#E1F5EE",bdr:"#9FE1CB",tc:"#04342C",
+   trigger:"DiseaseRiskAgent clears outbreak risk. Water returns to pre-flood baseline.",
+   agents:[{n:"UrbanRiskAgent",bg:"#FAEEDA",c:"#633806"},{n:"SentinelAgent",bg:"#E6F1FB",c:"#0C447C"},{n:"FloodPredictAgent",bg:"#EEEDFE",c:"#26215C"}],
+   actions:"UrbanRiskAgent generates damage assessment by comparing pre/post satellite imagery. Identifies which infrastructure failed due to outdated rainfall pattern assumptions vs. structural failure — the basis for redesign vs. repair decisions. FloodPredictAgent ingests this event's verified data as new training examples, feeding the autoresearch overnight loop to improve models for the next cycle.",
+   outputs:["Infrastructure damage assessment","Urban redesign recommendations (cost vs. risk ROI)","Updated flood inundation models","New training data → autoresearch overnight loop","→ Return to Phase 00"],
+   probs:["Urban risk"],
+   trans:"→ Returns to Phase 00: continuous monitoring"},
+];
+
+const wrap=document.getElementById("phases");
+phases.forEach((p,i)=>{
+  const card=document.createElement("div");
+  card.style.cssText=`display:grid;grid-template-columns:7px 152px 1fr 162px;border:0.5px solid ${p.bdr};border-radius:8px;overflow:hidden;background:var(--color-background-primary);margin-bottom:2px`;
+  card.innerHTML=`
+    <div style="background:${p.accent}"></div>
+    <div style="padding:11px 10px;border-right:0.5px solid ${p.bdr};background:${p.bg}">
+      <div style="font-size:9px;font-weight:500;color:${p.accent};margin-bottom:2px;letter-spacing:.05em">phase ${p.n}</div>
+      <div style="font-size:12px;font-weight:500;color:${p.tc};line-height:1.3;margin-bottom:4px">${p.name}</div>
+      <div style="font-size:10px;color:${p.accent};opacity:.7;margin-bottom:9px">${p.timing}</div>
+      <div class="lbl">addresses</div>
+      <div style="display:flex;flex-direction:column;gap:3px">${p.probs.map(pr=>{const s=PROBLEM_S[pr]||{bg:"#F1EFE8",col:"#2C2C2A"};return`<span style="font-size:9px;padding:2px 6px;border-radius:3px;background:${s.bg};color:${s.col};font-weight:500">${pr}</span>`;}).join("")}</div>
+    </div>
+    <div style="padding:11px 13px">
+      <div class="lbl">trigger</div>
+      <div style="font-size:11px;margin-bottom:8px;line-height:1.4;color:var(--color-text-secondary)">${p.trigger}</div>
+      <div class="lbl">active agents</div>
+      <div style="display:flex;flex-wrap:wrap;gap:3px;margin-bottom:8px">${p.agents.map(a=>`<span class="ac" style="background:${a.bg};color:${a.c}">${a.n}</span>`).join("")}</div>
+      <div class="lbl">key actions</div>
+      <div style="font-size:11px;color:var(--color-text-secondary);line-height:1.55">${p.actions}</div>
+    </div>
+    <div style="padding:11px;background:var(--color-background-secondary);border-left:0.5px solid ${p.bdr}">
+      <div class="lbl">outputs</div>
+      ${p.outputs.map(o=>`<div class="out"><span style="opacity:.45;flex-shrink:0">→</span>${o}</div>`).join("")}
+    </div>`;
+  wrap.appendChild(card);
+  const tr=document.createElement("div");
+  tr.style.cssText="display:flex;align-items:center;gap:0;padding:0 0 0 163px;margin-bottom:2px";
+  tr.innerHTML=`<div style="display:flex;flex-direction:column;align-items:flex-start;gap:0;padding:2px 10px;border-left:1px dashed var(--color-border-secondary)"><div style="font-size:10px;color:var(--color-text-tertiary);line-height:1.4"><span style="font-weight:500">if: </span>${p.trans}</div></div>`;
+  wrap.appendChild(tr);
+});
+</script>
