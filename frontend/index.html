@@ -1,152 +1,161 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FloodOps — Real-Time Flood Intelligence</title>
-  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/src/style.css" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="FloodOps v3 — Real-time 3D flood monitoring, ensemble uncertainty visualization, and multi-agent orchestration">
+    <title>FloodOps — Flood Monitoring & Response</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
-  <!-- ═══════════════════════════════════════════════ -->
-  <!-- FULL-VIEWPORT MAP CONTAINER                     -->
-  <!-- ═══════════════════════════════════════════════ -->
-  <div id="map-container"></div>
+    <!-- Full-viewport map canvas -->
+    <div id="map-container"></div>
 
-  <!-- ═══════════════════════════════════════════════ -->
-  <!-- TOP BAR — Logo + Phase Bar + Auth               -->
-  <!-- ═══════════════════════════════════════════════ -->
-  <header id="top-bar" class="glass-panel">
-    <div class="top-bar__left">
-      <div class="logo">
-        <svg class="logo__icon" viewBox="0 0 32 32" width="28" height="28">
-          <path d="M16 2C16 2 6 15 6 21C6 26.523 10.477 31 16 31C21.523 31 26 26.523 26 21C26 15 16 2 16 2Z" fill="url(#logoGrad)"/>
-          <defs><linearGradient id="logoGrad" x1="16" y1="2" x2="16" y2="31" gradientUnits="userSpaceOnUse"><stop stop-color="#60a5fa"/><stop offset="1" stop-color="#3b82f6"/></linearGradient></defs>
-        </svg>
-        <span class="logo__text">Flood<span class="logo__accent">Ops</span></span>
-      </div>
-      <div id="phase-bar" class="phase-bar"></div>
+    <!-- Phase bar (top) -->
+    <div id="phase-bar" class="glass-panel phase-bar">
+        <div class="phase-dot active" data-phase="00">00</div>
+        <div class="phase-connector"></div>
+        <div class="phase-dot" data-phase="01">01</div>
+        <div class="phase-connector"></div>
+        <div class="phase-dot" data-phase="02">02</div>
+        <div class="phase-connector"></div>
+        <div class="phase-dot" data-phase="03">03</div>
+        <div class="phase-connector"></div>
+        <div class="phase-dot" data-phase="04">04</div>
+        <div class="phase-connector"></div>
+        <div class="phase-dot" data-phase="05">05</div>
+        <div class="phase-connector"></div>
+        <div class="phase-dot" data-phase="06">06</div>
     </div>
-    <div class="top-bar__right">
-      <div id="data-cadence" class="data-cadence"></div>
-      <div id="auth-status" class="auth-status">
-        <button id="auth-btn" class="btn btn--ghost">Sign In</button>
-      </div>
-    </div>
-  </header>
 
-  <!-- ═══════════════════════════════════════════════ -->
-  <!-- LEFT PANEL — Layers + Metrics                   -->
-  <!-- ═══════════════════════════════════════════════ -->
-  <aside id="left-panel" class="glass-panel side-panel side-panel--left">
-    <div id="metrics-panel" class="metrics-panel"></div>
-    <div class="panel-divider"></div>
-    <div id="layer-panel" class="layer-panel"></div>
-  </aside>
+    <!-- Metrics bar (top-right) -->
+    <div id="metrics-panel" class="glass-panel metrics-panel">
+        <div class="metric">
+            <span class="metric-label">Population at Risk</span>
+            <span class="metric-value" id="metric-pop">—</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Peak ETA</span>
+            <span class="metric-value" id="metric-eta">—</span>
+        </div>
+        <div class="metric">
+            <span class="metric-label">Max Probability</span>
+            <span class="metric-value" id="metric-prob">—</span>
+        </div>
+    </div>
 
-  <!-- ═══════════════════════════════════════════════ -->
-  <!-- RIGHT PANEL — Ensemble + Scenarios              -->
-  <!-- ═══════════════════════════════════════════════ -->
-  <aside id="right-panel" class="glass-panel side-panel side-panel--right">
-    <div id="ensemble-panel" class="ensemble-panel">
-      <h3 class="panel-title">Ensemble Analysis</h3>
-      <div id="member-selector" class="member-selector"></div>
-      <div id="disagreement-badges" class="disagreement-badges"></div>
-      <canvas id="probability-fan-canvas" class="probability-fan-canvas" width="320" height="200"></canvas>
+    <!-- Layer panel (left sidebar) -->
+    <div id="layer-panel" class="glass-panel layer-panel">
+        <h3 class="panel-title">Layers</h3>
+        <div class="layer-item" data-layer="floodZones">
+            <input type="checkbox" id="layer-flood" checked><label for="layer-flood">Flood Zones</label>
+            <input type="range" class="opacity-slider" min="0" max="100" value="80" data-layer="floodZones">
+        </div>
+        <div class="layer-item" data-layer="floodDepth">
+            <input type="checkbox" id="layer-depth" checked><label for="layer-depth">Flood Depth 3D</label>
+            <input type="range" class="opacity-slider" min="0" max="100" value="90" data-layer="floodDepth">
+        </div>
+        <div class="layer-item" data-layer="population">
+            <input type="checkbox" id="layer-pop"><label for="layer-pop">Population Risk</label>
+            <input type="range" class="opacity-slider" min="0" max="100" value="70" data-layer="population">
+        </div>
+        <div class="layer-item" data-layer="evacuation">
+            <input type="checkbox" id="layer-evac" checked><label for="layer-evac">Evacuation Arcs</label>
+            <input type="range" class="opacity-slider" min="0" max="100" value="85" data-layer="evacuation">
+        </div>
+        <div class="layer-item" data-layer="spaghetti">
+            <input type="checkbox" id="layer-spag"><label for="layer-spag">Ensemble Spaghetti</label>
+            <input type="range" class="opacity-slider" min="0" max="100" value="60" data-layer="spaghetti">
+        </div>
+        <div class="layer-item" data-layer="sensors">
+            <input type="checkbox" id="layer-sensors" checked><label for="layer-sensors">Sensors</label>
+            <input type="range" class="opacity-slider" min="0" max="100" value="95" data-layer="sensors">
+        </div>
+        <div class="layer-item" data-layer="glacialLakes">
+            <input type="checkbox" id="layer-lakes"><label for="layer-lakes">Glacial Lakes</label>
+            <input type="range" class="opacity-slider" min="0" max="100" value="80" data-layer="glacialLakes">
+        </div>
+        <div id="data-cadence" class="data-cadence"></div>
     </div>
-    <div class="panel-divider"></div>
-    <div id="scenario-panel" class="scenario-panel">
-      <h3 class="panel-title">What-If Scenarios</h3>
-      <div id="scenario-controls"></div>
-    </div>
-  </aside>
 
-  <!-- ═══════════════════════════════════════════════ -->
-  <!-- BOTTOM — Timeline Scrubber                      -->
-  <!-- ═══════════════════════════════════════════════ -->
-  <div id="timeline-bar" class="glass-panel timeline-bar">
-    <div class="timeline-bar__controls">
-      <button id="timeline-play" class="btn btn--icon" aria-label="Play/Pause">
-        <svg id="play-icon" viewBox="0 0 24 24" width="20" height="20"><polygon points="5,3 19,12 5,21" fill="currentColor"/></svg>
-        <svg id="pause-icon" viewBox="0 0 24 24" width="20" height="20" style="display:none"><rect x="5" y="3" width="4" height="18" fill="currentColor"/><rect x="15" y="3" width="4" height="18" fill="currentColor"/></svg>
-      </button>
-      <button id="timeline-speed" class="btn btn--ghost btn--sm speed-btn">1×</button>
+    <!-- Timeline scrubber (bottom) -->
+    <div id="timeline-panel" class="glass-panel timeline-panel">
+        <div class="timeline-controls">
+            <button id="timeline-play" class="timeline-btn">▶</button>
+            <button id="timeline-pause" class="timeline-btn" style="display:none">⏸</button>
+            <select id="timeline-speed" class="timeline-speed">
+                <option value="1">1×</option>
+                <option value="2">2×</option>
+                <option value="4" selected>4×</option>
+            </select>
+        </div>
+        <div class="timeline-track">
+            <span class="timeline-label">T-72h</span>
+            <input type="range" id="timeline-slider" min="0" max="100" value="50" class="timeline-slider">
+            <span class="timeline-label">T+10d</span>
+        </div>
+        <div class="timeline-info">
+            <span id="timeline-current">NOW</span>
+            <span id="timeline-phase" class="phase-badge">MONITORING</span>
+        </div>
     </div>
-    <div class="timeline-bar__scrubber">
-      <span id="timeline-label-start" class="timeline-label mono">T-72h</span>
-      <div class="scrubber-track">
-        <input type="range" id="timeline-slider" min="0" max="1000" value="440" step="1" />
-        <div id="scrubber-fill" class="scrubber-fill"></div>
-        <div id="scrubber-now-marker" class="scrubber-now-marker" title="Now"></div>
-      </div>
-      <span id="timeline-label-end" class="timeline-label mono">T+10d</span>
-    </div>
-    <div id="timeline-current" class="timeline-current mono"></div>
-  </div>
 
-  <!-- ═══════════════════════════════════════════════ -->
-  <!-- WHY CARD (anchored to map features)             -->
-  <!-- ═══════════════════════════════════════════════ -->
-  <div id="why-card-container" class="why-card-container"></div>
-
-  <!-- ═══════════════════════════════════════════════ -->
-  <!-- CHAT DRAWER                                     -->
-  <!-- ═══════════════════════════════════════════════ -->
-  <button id="chat-toggle" class="btn btn--fab chat-toggle" aria-label="Open AI Chat">
-    <svg viewBox="0 0 24 24" width="22" height="22"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z" fill="currentColor"/></svg>
-  </button>
-  <div id="chat-drawer" class="glass-panel chat-drawer chat-drawer--hidden">
-    <div class="chat-drawer__header">
-      <h3 class="panel-title">FloodOps AI</h3>
-      <button id="chat-close" class="btn btn--icon btn--sm" aria-label="Close">✕</button>
+    <!-- Ensemble uncertainty panel (bottom-right) -->
+    <div id="ensemble-panel" class="glass-panel ensemble-panel" style="display:none">
+        <h3 class="panel-title">Ensemble Uncertainty</h3>
+        <canvas id="probability-fan-canvas" width="400" height="200"></canvas>
+        <div id="disagreement-badges"></div>
+        <div id="member-selector"></div>
     </div>
-    <div id="chat-messages" class="chat-messages"></div>
-    <div class="chat-input-bar">
-      <input id="chat-input" type="text" class="chat-input" placeholder="Ask about flood conditions…" />
-      <button id="chat-send" class="btn btn--primary btn--sm">Send</button>
-    </div>
-  </div>
 
-  <!-- ═══════════════════════════════════════════════ -->
-  <!-- SCENARIO DIFF OVERLAY                           -->
-  <!-- ═══════════════════════════════════════════════ -->
-  <div id="diff-overlay" class="diff-overlay diff-overlay--hidden">
-    <div class="diff-overlay__header glass-panel">
-      <span class="diff-label">Scenario Comparison</span>
-      <div class="diff-mode-toggle">
-        <button class="btn btn--sm diff-mode-btn active" data-mode="overlay">Overlay</button>
-        <button class="btn btn--sm diff-mode-btn" data-mode="split">Split</button>
-      </div>
-      <button id="diff-close" class="btn btn--icon btn--sm">✕</button>
+    <!-- What-if scenario panel (right) -->
+    <div id="scenario-panel" class="glass-panel scenario-panel" style="display:none">
+        <h3 class="panel-title">What-If Scenario</h3>
+        <div class="scenario-slider">
+            <label>Rainfall: <span id="rainfall-val">120</span>mm/24h</label>
+            <input type="range" id="rainfall-slider" min="0" max="300" value="120">
+        </div>
+        <div class="scenario-slider">
+            <label>Soil Saturation: <span id="soil-val">85</span>%</label>
+            <input type="range" id="soil-slider" min="0" max="100" value="85">
+        </div>
+        <div class="scenario-slider">
+            <label>Dam Break: T+<span id="dam-val">—</span>h</label>
+            <input type="range" id="dam-slider" min="0" max="48" value="0">
+        </div>
+        <button id="scenario-run" class="btn-primary">▶ Re-run Forecast</button>
+        <div id="scenario-diff" class="scenario-diff"></div>
     </div>
-    <div id="diff-slider-container" class="diff-slider-container">
-      <input type="range" id="diff-slider" min="0" max="100" value="50" />
+
+    <!-- Spatial "why" card (appears on click) -->
+    <div id="why-card" class="glass-panel why-card" style="display:none"></div>
+
+    <!-- Chat drawer (secondary) -->
+    <button id="chat-toggle" class="glass-panel chat-toggle">💬</button>
+    <div id="chat-drawer" class="glass-panel chat-drawer" style="display:none">
+        <h3 class="panel-title">Ask FloodOps</h3>
+        <div id="chat-messages" class="chat-messages"></div>
+        <div class="chat-input-row">
+            <input type="text" id="chat-input" placeholder="Ask about the flood...">
+            <button id="chat-send" class="btn-primary">→</button>
+        </div>
     </div>
-  </div>
 
-  <!-- ═══════════════════════════════════════════════ -->
-  <!-- LOADING SCREEN                                  -->
-  <!-- ═══════════════════════════════════════════════ -->
-  <div id="loading-screen" class="loading-screen">
-    <div class="loading-screen__content">
-      <svg class="loading-drop" viewBox="0 0 64 64" width="64" height="64">
-        <path d="M32 4C32 4 12 30 12 42C12 53 21 62 32 62C43 62 52 53 52 42C52 30 32 4 32 4Z" fill="url(#loadGrad)"/>
-        <defs><linearGradient id="loadGrad" x1="32" y1="4" x2="32" y2="62"><stop stop-color="#60a5fa"/><stop offset="1" stop-color="#1e40af"/></linearGradient></defs>
-      </svg>
-      <h2 class="loading-text">FloodOps</h2>
-      <p class="loading-sub">Initializing flood intelligence…</p>
-      <div class="loading-bar"><div class="loading-bar__fill"></div></div>
-    </div>
-  </div>
-
-  <!-- Google Maps API (loaded async) -->
-  <script>
-    (g=>{var h,a,k,p="The Google Maps JavaScript API",c="google",l="importLibrary",q="__ib__",m=document,b=window;b=b[c]||(b[c]={});var d=b.maps||(b.maps={}),r=new Set,e=new URLSearchParams,u=()=>h||(h=new Promise(async(f,n)=>{await (a=m.createElement("script"));e.set("libraries","places,marker");e.set("callback",c+".maps."+q);a.src=`https://maps.googleapis.com/maps/api/js?`+e;d[q]=f;a.onerror=()=>h=n(Error(p+" could not load."));a.nonce=m.querySelector("script[nonce]")?.nonce||"";m.head.append(a)}));d[l]?console.warn(p+" only loads once."):d[l]=(f,...n)=>r.add(f)&&u().then(()=>d[l](f,...n))})();
-  </script>
-
-  <script type="module" src="/src/main.js"></script>
+    <!-- Google Maps script (loaded async) -->
+    <script>
+        window.FLOODOPS_CONFIG = {
+            apiUrl: import.meta.env?.VITE_API_URL || '/api/v1',
+            wsUrl: import.meta.env?.VITE_WS_URL || `ws://${location.host}/ws/flood`,
+            mapsApiKey: import.meta.env?.VITE_GOOGLE_MAPS_API_KEY || '',
+            center: { lat: 27.7, lng: 85.32 },
+            zoom: 12,
+        };
+    </script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=&libraries=geometry,visualization&callback=Function.prototype" async defer></script>
+    <script type="module" src="/src/main.js"></script>
 </body>
 </html>
