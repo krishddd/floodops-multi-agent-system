@@ -136,7 +136,7 @@
 
     <!-- Chat drawer (secondary) -->
     <button id="chat-toggle" class="glass-panel chat-toggle">💬</button>
-    <div id="chat-drawer" class="glass-panel chat-drawer" style="display:none">
+    <div id="chat-drawer" class="glass-panel chat-drawer">
         <h3 class="panel-title">Ask FloodOps</h3>
         <div id="chat-messages" class="chat-messages"></div>
         <div class="chat-input-row">
@@ -146,16 +146,22 @@
     </div>
 
     <!-- Google Maps script (loaded async) -->
-    <script>
-        window.FLOODOPS_CONFIG = {
-            apiUrl: import.meta.env?.VITE_API_URL || '/api/v1',
-            wsUrl: import.meta.env?.VITE_WS_URL || `ws://${location.host}/ws/flood`,
-            mapsApiKey: import.meta.env?.VITE_GOOGLE_MAPS_API_KEY || '',
-            center: { lat: 27.7, lng: 85.32 },
-            zoom: 12,
-        };
-    </script>
-    <script src="https://maps.googleapis.com/maps/api/js?key=&libraries=geometry,visualization&callback=Function.prototype" async defer></script>
+    <!-- Splash Screen -->
+    <div id="splash-screen" class="splash-screen">
+        <div class="splash-content">
+            <svg class="splash-logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+                <defs><linearGradient id="g2" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#4fc3f7"/><stop offset="100%" stop-color="#0277bd"/></linearGradient></defs>
+                <path d="M16 4c-2 0-3.5 1.2-4.2 2.8C10.8 5.6 9.2 5 7.5 5 4.5 5 2 7.5 2 10.5c0 1.2.4 2.3 1 3.2L16 28l13-14.3c.6-.9 1-2 1-3.2C30 7.5 27.5 5 24.5 5c-1.7 0-3.3.6-4.3 1.8C19.5 5.2 18 4 16 4z" fill="url(#g2)"/>
+            </svg>
+            <h2>FloodOps</h2>
+            <p>Initializing Systems...</p>
+            <div class="loader-bar"><div class="loader-fill"></div></div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toast-container" class="toast-container"></div>
+
     <script type="module" src="/src/main.js"></script>
 </body>
 </html>

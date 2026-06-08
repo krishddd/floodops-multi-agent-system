@@ -9,10 +9,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@deck.gl/core": "^9.1.0",
-    "@deck.gl/layers": "^9.1.0",
     "@deck.gl/aggregation-layers": "^9.1.0",
-    "@deck.gl/google-maps": "^9.1.0"
+    "@deck.gl/core": "^9.1.0",
+    "@deck.gl/google-maps": "^9.1.0",
+    "@deck.gl/layers": "^9.1.0",
+    "@googlemaps/js-api-loader": "^2.1.0"
   },
   "devDependencies": {
     "vite": "^6.0.0"

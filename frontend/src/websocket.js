@@ -3,6 +3,7 @@
  */
 let _ws = null;
 let _reconnectTimer = null;
+let _reconnectAttempts = 0;
 const _handlers = {};
 
 export function onMessage(type, handler) {
@@ -17,6 +18,7 @@ export function connect(url) {
 
     _ws.onopen = () => {
         console.log('🔌 WebSocket connected');
+        _reconnectAttempts = 0;
         if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
     };
 
@@ -31,8 +33,10 @@ export function connect(url) {
     };
 
     _ws.onclose = () => {
-        console.log('🔌 WebSocket disconnected — reconnecting in 3s');
-        _reconnectTimer = setTimeout(() => connect(url), 3000);
+        let delay = Math.min(1000 * Math.pow(1.5, _reconnectAttempts), 30000); // Max 30s
+        console.log(`🔌 WebSocket disconnected — reconnecting in ${Math.round(delay/1000)}s`);
+        _reconnectAttempts++;
+        _reconnectTimer = setTimeout(() => connect(url), delay);
     };
 
     _ws.onerror = (err) => console.error('WS error:', err);

@@ -1,13 +1,18 @@
-/**
- * Google Maps + deck.gl overlay initialization.
- * 45° tilt by default — shows terrain depth for mountain/valley flooding.
- */
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
+import { Loader } from '@googlemaps/js-api-loader';
 
 let _map = null;
 let _overlay = null;
 
-export function initMap(container, config) {
+export async function initMap(container, config) {
+    const loader = new Loader({
+        apiKey: config.mapsApiKey,
+        version: "weekly",
+        libraries: ["geometry", "visualization"]
+    });
+
+    await loader.load();
+
     _map = new google.maps.Map(container, {
         center: config.center,
         zoom: config.zoom || 12,

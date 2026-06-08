@@ -8,7 +8,7 @@ export function initChat() {
     const send = document.getElementById('chat-send');
 
     toggle?.addEventListener('click', () => {
-        drawer.style.display = drawer.style.display === 'none' ? 'flex' : 'none';
+        drawer.classList.toggle('open');
     });
 
     const sendMsg = async () => {
