@@ -44,16 +44,20 @@ class FloodPredictAgent(BaseAgent):
 
     async def initialize(self) -> None:
         """Subscribe to anomaly_alerts and glof_alerts queues."""
-        self.event_bus.subscribe("anomaly_alerts", self.handle_anomaly)
-        self.event_bus.subscribe("glof_alerts", self.handle_glof_alert)
-        await self.log_action("initialize", "FloodPredictAgent subscribed to anomaly_alerts and glof_alerts", 1.0)
+        await self.event_bus.subscribe("anomaly_alerts", self.handle_anomaly)
+        await self.event_bus.subscribe("glof_alerts", self.handle_glof_alert)
+        self.log_action("initialize", "FloodPredictAgent subscribed to anomaly_alerts and glof_alerts", 1.0)
+
+    async def handle_event(self, channel: str, payload: Any) -> None:
+        """Required by BaseAgent. We subscribe to specific handlers instead."""
+        pass
 
     async def handle_anomaly(self, alert: dict[str, Any]) -> None:
         """Process an anomaly alert from SentinelAgent."""
         forecast = await self.run_ensemble(alert)
         if forecast:
             await self.event_bus.emit("flood_forecasts", forecast.model_dump())
-            await self.log_action(
+            self.log_action(
                 "emit_forecast",
                 f"Emitted flood forecast with max_probability={forecast.max_probability:.2f} "
                 f"for watershed {forecast.watershed_id}",

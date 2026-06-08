@@ -55,7 +55,6 @@ async def lifespan(app: FastAPI):
     _app_state["reasoner"] = reasoner
     _app_state["ws_clients"] = set()
 
-    # Initialize agents
     from floodops.agents.sentinel import SentinelAgent
     from floodops.agents.glof import GLOFAgent
     from floodops.agents.predict import FloodPredictAgent
@@ -63,6 +62,12 @@ async def lifespan(app: FastAPI):
     from floodops.agents.alert import AlertAgent
     from floodops.agents.resource import ResourceAgent
     from floodops.agents.disease import DiseaseRiskAgent
+    from floodops.orchestrator.service import OrchestratorService
+
+    # Initialize Graph Orchestrator
+    orchestrator = OrchestratorService(event_bus, _app_state)
+    await orchestrator.initialize()
+    _app_state["orchestrator"] = orchestrator
 
     agents = [
         SentinelAgent(event_bus=event_bus),
@@ -77,9 +82,10 @@ async def lifespan(app: FastAPI):
         await agent.initialize()
     _app_state["agents"] = agents
 
-    print("🌊 FloodOps v3 — All 7 agents initialized")
-    print(f"📡 API: http://0.0.0.0:8000")
-    print(f"🗺️  Frontend: {FRONTEND_ORIGIN}")
+    print("FloodOps v3 - All 7 agents initialized")
+    print("LangGraph Orchestrator hooked to Event Bus")
+    print(f"API: http://0.0.0.0:8000")
+    print(f"Frontend: {FRONTEND_ORIGIN}")
 
     yield
 

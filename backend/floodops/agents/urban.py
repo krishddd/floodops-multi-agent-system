@@ -38,15 +38,18 @@ class UrbanRiskAgent(BaseAgent):
     trigger_types: list[TriggerType] = [TriggerType.QUEUE]
 
     async def initialize(self) -> None:
-        self.event_bus.subscribe("flood_forecasts", self.handle_forecast)
-        await self.log_action("initialize", "UrbanRiskAgent subscribed to flood_forecasts", 1.0)
+        await self.event_bus.subscribe("flood_forecasts", self.handle_forecast)
+        self.log_action("initialize", "UrbanRiskAgent subscribed to flood_forecasts", 1.0)
+
+    async def handle_event(self, channel: str, payload: Any) -> None:
+        pass
 
     async def handle_forecast(self, forecast_data: dict[str, Any]) -> None:
         """Process incoming flood forecast and generate urban risk report."""
         report = await self.map_urban_risk(forecast_data)
         if report:
             await self.event_bus.emit("urban_risk", report.model_dump())
-            await self.log_action(
+            self.log_action(
                 "emit_urban_risk",
                 f"Mapped {len(report.zones)} zones, {report.total_population_at_risk} people at risk",
                 0.8,

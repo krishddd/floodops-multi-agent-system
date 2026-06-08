@@ -34,25 +34,28 @@ class ResourceAgent(BaseAgent):
     trigger_types: list[TriggerType] = [TriggerType.QUEUE]
 
     async def initialize(self) -> None:
-        self.event_bus.subscribe("flood_forecasts", self.handle_forecast)
-        self.event_bus.subscribe("disease_risk", self.handle_disease_risk)
-        await self.log_action("initialize", "ResourceAgent subscribed to flood_forecasts and disease_risk", 1.0)
+        await self.event_bus.subscribe("flood_forecasts", self.handle_forecast)
+        await self.event_bus.subscribe("disease_risk", self.handle_disease_risk)
+        self.log_action("initialize", "ResourceAgent subscribed to flood_forecasts and disease_risk", 1.0)
 
     async def handle_forecast(self, forecast_data: dict[str, Any]) -> None:
         """Pre-position supplies if probability > 50% and 12+ hours to peak."""
         max_prob = forecast_data.get("max_probability", 0)
         if max_prob < 0.5:
-            await self.log_action("skip_preposition", f"Probability {max_prob:.0%} below 50% threshold", 0.9)
+            self.log_action("skip_preposition", f"Probability {max_prob:.0%} below 50% threshold", 0.9)
             return
 
         orders = await self.preposition_supplies(forecast_data)
         if orders:
             await self.event_bus.emit("resource_orders", orders.model_dump())
-            await self.log_action(
+            self.log_action(
                 "preposition",
                 f"Generated {len(orders.logistics_orders)} logistics orders, supplies prepositioned",
                 0.85,
             )
+
+    async def handle_event(self, channel: str, payload: Any) -> None:
+        pass
 
     async def handle_disease_risk(self, risk_data: dict[str, Any]) -> None:
         """Distribute medical supplies to disease hotspots post-flood."""

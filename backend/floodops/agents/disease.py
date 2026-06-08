@@ -34,15 +34,18 @@ class DiseaseRiskAgent(BaseAgent):
     trigger_types: list[TriggerType] = [TriggerType.QUEUE]
 
     async def initialize(self) -> None:
-        self.event_bus.subscribe("flood_receding", self.handle_flood_receding)
-        await self.log_action("initialize", "DiseaseRiskAgent subscribed to flood_receding", 1.0)
+        await self.event_bus.subscribe("flood_receding", self.handle_flood_receding)
+        self.log_action("initialize", "DiseaseRiskAgent subscribed to flood_receding", 1.0)
+
+    async def handle_event(self, channel: str, payload: Any) -> None:
+        pass
 
     async def handle_flood_receding(self, event_data: dict[str, Any]) -> None:
         """Model disease risk once flood waters begin receding."""
         report = await self.forecast_disease_risk(event_data)
         if report:
             await self.event_bus.emit("disease_risk", report.model_dump())
-            await self.log_action(
+            self.log_action(
                 "emit_disease_risk",
                 f"Identified {len(report.hotspots)} hotspots, "
                 f"generated {len(report.supply_orders)} supply orders",

@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, BackgroundTasks
 
 from floodops.api.app import get_event_bus, get_reasoner, get_state
 from floodops.models.enums import AlertLevel, FloodPhase
@@ -60,8 +60,8 @@ async def get_agent_status() -> list[dict]:
 
 
 @router.post("/simulate")
-async def simulate_flood_event() -> dict:
-    """Inject a mock flood event to trigger the full pipeline."""
+async def simulate_flood_event(background_tasks: BackgroundTasks) -> dict:
+    """Inject a mock flood event to trigger the full pipeline asynchronously."""
     bus = get_event_bus()
     alert = AnomalyAlert(
         alert_id=str(uuid.uuid4()),
@@ -76,8 +76,15 @@ async def simulate_flood_event() -> dict:
         agreeing_sensors=4,
         total_sensors=5,
         description="Bagmati River gauge at Chobar reading 4.2m, 3.8σ above 30-day baseline",
+        source_readings=[],
+        timestamp=datetime.utcnow(),
     )
-    await bus.emit("anomaly_alerts", alert.model_dump())
+    # Fire and forget
+    async def _emit_task():
+        await bus.emit("anomaly_alerts", alert.model_dump())
+        
+    background_tasks.add_task(_emit_task)
+    
     return {"status": "simulation_triggered", "alert_id": alert.alert_id, "severity": "HIGH", "z_score": 3.8}
 
 

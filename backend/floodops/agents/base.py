@@ -55,7 +55,7 @@ class BaseAgent(ABC):
 
         Called once during application startup (from FastAPI lifespan).
         Implementations should call:
-          - ``self.event_bus.subscribe(channel, self.handle_event)``
+          - ``await self.event_bus.subscribe(channel, self.handle_event)``
           - ``self.event_bus.register_cron(schedule, self._cron_tick)``
           - ``self.event_bus.register_direct_handler(self.agent_id, self.handle_direct)``
         """
@@ -88,7 +88,7 @@ class BaseAgent(ABC):
         action: str,
         reasoning: str,
         confidence: float,
-        phase: FloodPhase,
+        phase: FloodPhase = FloodPhase.MONITORING,
         *,
         input_summary: Optional[str] = None,
         output_summary: Optional[str] = None,

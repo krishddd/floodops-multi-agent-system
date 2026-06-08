@@ -43,9 +43,12 @@ class AlertAgent(BaseAgent):
     trigger_types: list[TriggerType] = [TriggerType.QUEUE, TriggerType.HTTP_DIRECT]
 
     async def initialize(self) -> None:
-        self.event_bus.subscribe("flood_forecasts", self.handle_forecast)
-        self.event_bus.register_direct_handler("alert_agent", "trigger_glof_emergency", self.handle_glof_emergency)
-        await self.log_action("initialize", "AlertAgent subscribed to flood_forecasts + registered GLOF direct handler", 1.0)
+        await self.event_bus.subscribe("flood_forecasts", self.handle_forecast)
+        self.event_bus.register_direct_handler("alert_agent", self.handle_glof_emergency)
+        self.log_action("initialize", "AlertAgent subscribed to flood_forecasts + registered GLOF direct handler", 1.0)
+
+    async def handle_event(self, channel: str, payload: Any) -> None:
+        pass
 
     async def handle_forecast(self, forecast_data: dict[str, Any]) -> None:
         """Process flood forecast and dispatch appropriate alerts."""
@@ -53,12 +56,12 @@ class AlertAgent(BaseAgent):
         severity = self.assess_level(max_prob)
 
         if severity == SeverityLevel.ADVISORY:
-            await self.log_action("skip_alert", f"Probability {max_prob:.0%} below WATCH threshold", 0.9)
+            self.log_action("skip_alert", f"Probability {max_prob:.0%} below WATCH threshold", 0.9)
             return
 
         dispatch = await self.dispatch_alerts(forecast_data, severity)
         await self.event_bus.emit("alert_dispatches", dispatch.model_dump())
-        await self.log_action(
+        self.log_action(
             "dispatch_alerts",
             f"Dispatched {severity.value} alerts, estimated reach: {dispatch.total_reach_estimate:,}",
             0.85,
@@ -72,7 +75,7 @@ class AlertAgent(BaseAgent):
         """
         dispatch = await self.dispatch_alerts(payload, SeverityLevel.EMERGENCY, is_glof=True)
         await self.event_bus.emit("alert_dispatches", dispatch.model_dump())
-        await self.log_action(
+        self.log_action(
             "glof_emergency_dispatch",
             f"EMERGENCY GLOF alert dispatched. Time-to-impact: {payload.get('impact_zone', {}).get('time_to_impact_minutes', '?')} minutes",
             1.0,
