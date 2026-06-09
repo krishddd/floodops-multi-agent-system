@@ -92,7 +92,18 @@ class EventBus:
         self._running: bool = False
         self._cron_tasks: list[asyncio.Task[None]] = []
         self._lock = asyncio.Lock()
+        # Metrics (dev-only, not restart-safe — see /metrics endpoint).
+        self._emit_counts: dict[str, int] = defaultdict(int)
+        self._error_count: int = 0
         logger.info("EventBus initialised (in-memory mode)")
+
+    def get_metrics(self) -> dict[str, Any]:
+        """Return in-memory counters for the /metrics endpoint (dev-only)."""
+        return {
+            "emit_counts": dict(self._emit_counts),
+            "handler_errors": self._error_count,
+            "total_emits": sum(self._emit_counts.values()),
+        }
 
     # ── Core pub/sub ─────────────────────────────────────────────────
 
@@ -113,6 +124,7 @@ class EventBus:
             4. Append to event history (capped)
         """
         event_id = str(uuid.uuid4())
+        self._emit_counts[channel] += 1
         event = PendingEvent(
             event_id=event_id,
             channel=channel,
@@ -125,6 +137,13 @@ class EventBus:
             "EventBus.emit channel=%s event_id=%s subscribers=%d",
             channel, event_id, len(handlers),
         )
+
+        # WebSocket broadcast FIRST, non-blocking — the UI must receive live
+        # events immediately and must NOT be gated on (slow or broken) agent
+        # subscribers. Fire-and-forget so a stuck orchestrator can't starve the
+        # frontend; errors are isolated inside _safe_ws_broadcast.
+        if self._ws_broadcast is not None:
+            asyncio.create_task(self._safe_ws_broadcast(channel, payload))
 
         # Fan-out delivery — all subscribers invoked concurrently
         if handlers:
@@ -141,14 +160,13 @@ class EventBus:
         if len(self._event_history) > 1000:
             self._event_history = self._event_history[-500:]
 
-        # WebSocket broadcast hook — push to all connected frontends
-        if self._ws_broadcast is not None:
-            try:
-                await self._ws_broadcast(channel, payload)
-            except Exception:
-                logger.exception("WebSocket broadcast hook failed for channel=%s", channel)
-
         return event_id
+
+    async def _safe_ws_broadcast(self, channel: str, payload: Any) -> None:
+        try:
+            await self._ws_broadcast(channel, payload)  # type: ignore[misc]
+        except Exception:
+            logger.exception("WebSocket broadcast hook failed for channel=%s", channel)
 
     async def subscribe(self, channel: str, handler: EventHandler) -> None:
         """Register an async callback for a channel.
@@ -381,14 +399,30 @@ class EventBus:
     # ── Internal helpers ─────────────────────────────────────────────
 
     async def _safe_deliver(self, handler: EventHandler, channel: str, payload: Any) -> None:
-        """Deliver an event to a handler with error isolation."""
+        """Deliver an event to a handler with error isolation.
+
+        On failure the error is logged AND surfaced on the ``agent_errors``
+        channel so the UI/observability can see it — failures are never silently
+        dropped. Recursion guard: a failure while delivering ``agent_errors``
+        itself is only logged (no re-emit), so a broken error handler can't loop.
+        """
         try:
             await handler(channel, payload)
-        except Exception:
+        except Exception as exc:
+            self._error_count += 1
             logger.exception(
                 "Handler %s failed on channel=%s",
                 handler.__qualname__, channel,
             )
+            if channel != "agent_errors":
+                try:
+                    await self.emit("agent_errors", {
+                        "channel": channel,
+                        "handler": getattr(handler, "__qualname__", str(handler)),
+                        "error": f"{type(exc).__name__}: {exc}",
+                    })
+                except Exception:  # pragma: no cover - defensive
+                    logger.exception("Failed to emit agent_errors")
 
     async def _cron_loop(self, job: CronJob) -> None:
         """Run a cron job in a loop until cancelled."""

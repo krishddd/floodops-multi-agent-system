@@ -6,12 +6,15 @@ StateGraph to advance the phase, and updates global state.
 """
 
 import asyncio
+import logging
 from typing import Any
 
 from floodops.models.state import FloodSystemState
 from floodops.orchestrator.graph import compile_flood_graph
 from floodops.queue.event_bus import EventBus
 from floodops.api.websocket import broadcast
+
+logger = logging.getLogger("floodops.orchestrator")
 
 
 class OrchestratorService:
@@ -43,24 +46,39 @@ class OrchestratorService:
             self.global_state["flood_state"] = create_initial_state()
 
     async def _step_graph(self) -> None:
-        """Run the LangGraph state machine sequentially."""
+        """Advance the LangGraph state machine one step.
+
+        NOTE: the compiled graph self-loops on the ``monitoring`` node when no
+        escalation condition is met, so a full ``ainvoke`` from the entry node
+        would recurse to the limit. We cap ``recursion_limit`` low and treat a
+        recursion/any error as "no transition this step" — the phase simply
+        stays put rather than crashing the handler. (Proper one-shot graph
+        redesign is tracked separately; live streaming does not depend on it.)
+        """
         async with self._lock:
             current_state = self.global_state["flood_state"]
-            
-            # The LangGraph ainvoke expects the full state dictionary/object
-            new_state = await self.graph.ainvoke(current_state)
-            
-            # Detect phase change
             old_phase = current_state.get("current_phase", "00_MONITORING")
+            try:
+                new_state = await self.graph.ainvoke(
+                    current_state, config={"recursion_limit": 12}
+                )
+            except Exception as exc:
+                logger.warning("graph step skipped: %s", type(exc).__name__)
+                return
+
             new_phase = new_state.get("current_phase", "00_MONITORING")
-            
             self.global_state["flood_state"] = new_state
 
             if old_phase != new_phase:
-                print(f"🔄 ORCHESTRATOR PHASE CHANGE: {old_phase} ➔ {new_phase}")
-                await broadcast("heartbeat", {
-                    "phase": new_phase,
-                    "event_id": new_state.get("event_id", "")
+                print(f"ORCHESTRATOR PHASE CHANGE: {old_phase} -> {new_phase}")
+                # Single-dict envelope contract: {type, data, ts}.
+                await broadcast({
+                    "type": "phase_transition",
+                    "data": {
+                        "phase": new_phase,
+                        "previous_phase": old_phase,
+                        "event_id": new_state.get("event_id", ""),
+                    },
                 })
 
     async def handle_forecast(self, channel: str, payload: dict[str, Any]) -> None:

@@ -27,6 +27,8 @@ from floodops.config import (
     LLM_CONFIDENCE_FLOOR,
     LLM_ENSEMBLE_RUNS,
     LLM_REFLEXION_MAX_RETRIES,
+    LLM_REFLEXION_TOTAL_TIMEOUT_SECONDS,
+    LLM_TIMEOUT_SECONDS,
 )
 from floodops.models.enums import FloodPhase, TriggerType
 from floodops.models.orchestrator import AuditEntry
@@ -34,6 +36,31 @@ from floodops.models.reasoning import ReasonedAssessment, UncertaintyBounds
 from floodops.queue.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
+
+# Shared, lazily-initialised concurrency cap across ALL agents' LLM calls.
+# Created in the FastAPI lifespan (see api/app.py) via set_llm_semaphore() so it
+# binds to the running event loop and reads config at startup, not import time.
+# When None (unit tests / no lifespan), reasoning runs unbounded.
+_LLM_SEMAPHORE: Optional["asyncio.Semaphore"] = None
+
+
+def set_llm_semaphore(sem: Optional["asyncio.Semaphore"]) -> None:
+    """Install the shared LLM concurrency semaphore (called from the lifespan)."""
+    global _LLM_SEMAPHORE
+    _LLM_SEMAPHORE = sem
+
+
+class _NullCtx:
+    async def __aenter__(self) -> None:
+        return None
+
+    async def __aexit__(self, *exc: Any) -> None:
+        return None
+
+
+def _llm_slot() -> Any:
+    """Acquire the shared semaphore if installed, else a no-op context."""
+    return _LLM_SEMAPHORE if _LLM_SEMAPHORE is not None else _NullCtx()
 
 # Forward-declared to avoid a hard import cycle (client imports nothing here).
 try:  # pragma: no cover - typing convenience
@@ -127,6 +154,30 @@ class BaseAgent(ABC):
     def _llm_ready(self) -> bool:
         return self.llm is not None and self.llm.available()
 
+    async def _analyze(self, **kwargs: Any) -> Any:
+        """Single structured LLM call, bounded by the shared semaphore + a
+        per-call timeout. Returns None on timeout/error so callers fall back."""
+        try:
+            async with _llm_slot():
+                return await asyncio.wait_for(
+                    self.llm.analyze(**kwargs),  # type: ignore[union-attr]
+                    timeout=LLM_TIMEOUT_SECONDS,
+                )
+        except Exception as exc:  # timeout, rate limit, malformed response, …
+            self._logger.warning("LLM analyze failed/timed out: %s", exc)
+            return None
+
+    async def _critique(self, result: Any) -> str:
+        try:
+            async with _llm_slot():
+                return await asyncio.wait_for(
+                    self.llm.critique(result),  # type: ignore[union-attr]
+                    timeout=LLM_TIMEOUT_SECONDS,
+                )
+        except Exception as exc:
+            self._logger.warning("LLM critique failed/timed out: %s", exc)
+            return ""
+
     async def _run_with_reflexion(
         self,
         system: str,
@@ -141,15 +192,28 @@ class BaseAgent(ABC):
         """Reflexion loop: analyze → self-critique → retry on low confidence.
 
         Returns the first assessment whose ``confidence >= floor`` (or the last
-        attempt). Falls back to ``mock`` when no LLM is configured.
+        attempt). Falls back to ``mock`` when no LLM is configured, on any
+        per-call timeout/error, or if the whole loop exceeds
+        ``LLM_REFLEXION_TOTAL_TIMEOUT_SECONDS`` (prevents event-loop starvation).
         """
         if not self._llm_ready():
             return mock
+        try:
+            return await asyncio.wait_for(
+                self._reflexion_loop(system, data, context, schema, mock, floor, max_retries),
+                timeout=LLM_REFLEXION_TOTAL_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            self._logger.warning("Reflexion loop exceeded total budget: %s", exc)
+            return mock
 
+    async def _reflexion_loop(
+        self, system, data, context, schema, mock, floor, max_retries
+    ) -> _T:
         result = mock
         work_data = data
         for attempt in range(max_retries):
-            out = await self.llm.analyze(  # type: ignore[union-attr]
+            out = await self._analyze(
                 system=system, data=work_data, context=context, output_schema=schema
             )
             if out is None:
@@ -158,7 +222,7 @@ class BaseAgent(ABC):
             confidence = float(getattr(out, "confidence", 0.0) or 0.0)
             if confidence >= floor or attempt == max_retries - 1:
                 return result
-            critique = await self.llm.critique(out)  # type: ignore[union-attr]
+            critique = await self._critique(out)
             work_data = {"prior_analysis": _as_dict(out), "critique": critique,
                          "original": data}
         return result
@@ -181,14 +245,14 @@ class BaseAgent(ABC):
         if not self._llm_ready():
             return mock
 
+        # Each _analyze acquires the shared semaphore (bounded concurrency) and
+        # is per-call-timeout protected; failures resolve to None and are dropped.
         tasks = [
-            self.llm.analyze(  # type: ignore[union-attr]
-                system=system, data=data, context=context, output_schema=schema
-            )
+            self._analyze(system=system, data=data, context=context, output_schema=schema)
             for _ in range(max(1, runs))
         ]
-        results = [r for r in await asyncio.gather(*tasks, return_exceptions=False) if r]
-        results = [r for r in results if r is not None]
+        gathered = await asyncio.gather(*tasks, return_exceptions=True)
+        results = [r for r in gathered if r is not None and not isinstance(r, Exception)]
         if not results:
             return mock
         # Consensus = member nearest the median 'value' (fallback: 'confidence').

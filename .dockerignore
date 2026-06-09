@@ -1,0 +1,29 @@
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.venv/
+**/venv/
+**/*.egg-info/
+
+# Node / Vite
+**/node_modules/
+**/dist/
+**/.vite/
+
+# Tooling / local
+.git/
+.github/
+.claude/
+.idea/
+.vscode/
+**/.env
+**/.env.*
+!**/.env.example
+
+# Docs / artifacts
+*.log
+*.md
+!CLAUDE.md

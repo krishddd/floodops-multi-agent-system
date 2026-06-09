@@ -10,13 +10,14 @@ Serves:
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from floodops.config import FRONTEND_ORIGIN
+from floodops.config import FRONTEND_ORIGIN, LLM_ENSEMBLE_CONCURRENCY
 from floodops.models.state import FloodSystemState, create_initial_state
 from floodops.queue.event_bus import EventBus
 from floodops.llm.client import FloodLLMClient
@@ -72,6 +73,14 @@ async def lifespan(app: FastAPI):
     _app_state["llm_client"] = llm_client
     _app_state["reasoner"] = reasoner
     _app_state["ws_clients"] = set()
+
+    # Shared LLM concurrency cap — created here (inside the running loop, after
+    # config load), then installed on BaseAgent so every agent's ensemble/
+    # reflexion calls are bounded. Default 1 = sequential (tier-1 RPM safe).
+    from floodops.agents.base import set_llm_semaphore
+    llm_semaphore = asyncio.Semaphore(LLM_ENSEMBLE_CONCURRENCY)
+    _app_state["_llm_semaphore"] = llm_semaphore
+    set_llm_semaphore(llm_semaphore)
 
     from floodops.agents.sentinel import SentinelAgent
     from floodops.agents.glof import GLOFAgent
@@ -165,5 +174,16 @@ def create_app() -> FastAPI:
     @app.get("/")
     async def root():
         return {"service": "FloodOps v3", "status": "running", "phase": get_state().get("current_phase", "MONITORING")}
+
+    @app.get("/health")
+    async def health():
+        # Minimal liveness contract for Docker/CI; enriched in Phase B1 with
+        # per-connector + agent + LLM status.
+        llm = _app_state.get("llm_client")
+        return {
+            "status": "ok",
+            "agents": len(_app_state.get("agents", [])),
+            "llm_available": bool(llm and llm.available()),
+        }
 
     return app

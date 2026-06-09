@@ -1,0 +1,6 @@
+# Optional semantic-memory stack for keyless agent memory recall.
+# ~2 GB installed (pulls torch); the model weights (~90 MB) are pre-downloaded
+# in the Docker ML layer. Without this, recall_similar() is disabled (returns []),
+# never faked. Enable in Docker via --build-arg INCLUDE_ML=true, or locally:
+#   pip install -r requirements-ml.txt
+sentence-transformers>=2.2.0

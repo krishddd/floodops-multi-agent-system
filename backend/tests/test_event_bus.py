@@ -7,6 +7,8 @@ TypeError the moment an event flowed. These tests pin the 2-arg contract.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 
@@ -44,6 +46,29 @@ async def test_single_arg_handler_is_isolated_not_fatal(event_bus, caplog):
 
 
 @pytest.mark.asyncio
+async def test_handler_failure_emits_agent_errors(event_bus):
+    """Phase A gate: a throwing handler surfaces an `agent_errors` event
+    (not a silent drop). Pinned so future _safe_deliver refactors can't regress it."""
+    errors = []
+
+    async def bad(channel, payload):
+        raise ValueError("boom")
+
+    async def err_listener(channel, payload):
+        errors.append(payload)
+
+    await event_bus.subscribe("flood_forecasts", bad)
+    await event_bus.subscribe("agent_errors", err_listener)
+    await event_bus.emit("flood_forecasts", {"x": 1})
+
+    assert len(errors) == 1
+    assert "ValueError: boom" in errors[0]["error"]
+    assert errors[0]["channel"] == "flood_forecasts"
+    # Recursion guard: the error channel itself must not re-emit on failure.
+    assert event_bus.get_metrics()["handler_errors"] == 1
+
+
+@pytest.mark.asyncio
 async def test_ws_broadcast_hook_receives_emits(event_bus):
     seen = []
 
@@ -52,4 +77,7 @@ async def test_ws_broadcast_hook_receives_emits(event_bus):
 
     event_bus.set_ws_broadcast(hook)
     await event_bus.emit("urban_risk", {"z": 1})
+    # The WS broadcast is fire-and-forget (non-blocking so a slow UI/agent can't
+    # gate emit) — yield the loop so the scheduled task runs before asserting.
+    await asyncio.sleep(0.05)
     assert "urban_risk" in seen

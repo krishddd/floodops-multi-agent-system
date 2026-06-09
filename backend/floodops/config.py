@@ -46,6 +46,24 @@ LLM_ENSEMBLE_RUNS: int = int(os.getenv("LLM_ENSEMBLE_RUNS", "3"))
 LLM_REFLEXION_MAX_RETRIES: int = int(os.getenv("LLM_REFLEXION_MAX_RETRIES", "3"))
 LLM_CONFIDENCE_FLOOR: float = float(os.getenv("LLM_CONFIDENCE_FLOOR", "0.75"))
 
+# Reasoning resilience (v2): per-call timeout and an outer cap on the whole
+# reflexion loop so a slow/unavailable LLM can never starve an agent's event
+# loop slot — both fall back to the caller's deterministic mock on expiry.
+LLM_TIMEOUT_SECONDS: float = float(os.getenv("LLM_TIMEOUT_SECONDS", "20"))
+LLM_REFLEXION_TOTAL_TIMEOUT_SECONDS: float = float(
+    os.getenv("LLM_REFLEXION_TOTAL_TIMEOUT_SECONDS", "120")
+)
+# Shared cap on concurrent LLM calls across ALL agents (default 1 = sequential,
+# safe for tier-1 RPM limits). The semaphore is created lazily in the app
+# lifespan; raise freely in no-key/dev mode (NullProvider makes no network calls).
+LLM_ENSEMBLE_CONCURRENCY: int = int(os.getenv("LLM_ENSEMBLE_CONCURRENCY", "1"))
+
+# Agent memory (v2, dev-only / not restart-safe): bounded FIFO vector store.
+MEMORY_MAX_EVENTS: int = int(os.getenv("MEMORY_MAX_EVENTS", "500"))
+
+# CompoundEventAgent correlation window (v2).
+COMPOUND_WINDOW_HOURS: float = float(os.getenv("COMPOUND_WINDOW_HOURS", "6"))
+
 # ---------------------------------------------------------------------------
 # External data connectors
 # ---------------------------------------------------------------------------
