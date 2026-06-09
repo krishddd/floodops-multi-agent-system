@@ -57,8 +57,8 @@ class SentinelAgent(BaseAgent):
     agent_id: str = "sentinel_agent"
     trigger_types: set[TriggerType] = {TriggerType.CRON}
 
-    def __init__(self, event_bus: EventBus, llm=None) -> None:
-        super().__init__(event_bus, llm)
+    def __init__(self, event_bus: EventBus, llm=None, connector=None) -> None:
+        super().__init__(event_bus, llm, connector)
         # Baselines keyed by (watershed_id, metric)
         self._baselines: dict[tuple[str, str], Baseline] = {}
         # Recent readings for multi-sensor correlation

@@ -64,6 +64,22 @@ MEMORY_MAX_EVENTS: int = int(os.getenv("MEMORY_MAX_EVENTS", "500"))
 # CompoundEventAgent correlation window (v2).
 COMPOUND_WINDOW_HOURS: float = float(os.getenv("COMPOUND_WINDOW_HOURS", "6"))
 
+# Watershed flow topology for causal-graph reasoning (v2). Config-driven adjacency
+# (upstream -> downstream), keyed by region id, configurable per-region. This is
+# the SOLE source of topology — change DEFAULT_WATERSHED_REGION (or add a region)
+# when deploying outside the Kathmandu/Bagmati demo basin.
+DEFAULT_WATERSHED_REGION: str = os.getenv("DEFAULT_WATERSHED_REGION", "bagmati")
+WATERSHED_TOPOLOGY: dict[str, list[tuple[str, str]]] = {
+    # Bagmati basin (Kathmandu valley) — coarse demo topology.
+    "bagmati": [
+        ("Shivapuri_headwaters", "Bagmati_upper"),
+        ("Bagmati_upper", "Bagmati_Pashupati"),
+        ("Bagmati_Pashupati", "Bagmati_Chobar"),
+        ("Bishnumati_tributary", "Bagmati_Chobar"),
+        ("Bagmati_Chobar", "Bagmati_outlet"),
+    ],
+}
+
 # ---------------------------------------------------------------------------
 # External data connectors
 # ---------------------------------------------------------------------------

@@ -23,16 +23,19 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from floodops.agents.base import BaseAgent, _as_dict
+from floodops.config import COMPOUND_WINDOW_HOURS
 from floodops.llm.prompts import COMPOUND_EVENT_SYSTEM_PROMPT
 from floodops.models.compound import CompoundThreat, ContributingHazard
 from floodops.models.enums import TriggerType
 from floodops.models.geo import BBox, GeoJsonGeometry
 from floodops.models.reasoning import ReasonedAssessment
 
-# How long a hazard signal stays "active" for co-occurrence correlation.
-_CORRELATION_WINDOW = timedelta(hours=12)
+# How long a hazard signal stays "active" for co-occurrence correlation (config).
+_CORRELATION_WINDOW = timedelta(hours=COMPOUND_WINDOW_HOURS)
 # Minimum distinct hazards required to declare a compound event.
 _MIN_HAZARDS = 2
+# Re-emit only when the unified score moves more than this since the last emission.
+_SCORE_DELTA = 0.1
 
 
 class CompoundEventAgent(BaseAgent):
@@ -46,6 +49,9 @@ class CompoundEventAgent(BaseAgent):
         # Recent hazard signals: hazard_type -> (timestamp, ContributingHazard, bbox)
         self._active: dict[str, tuple[datetime, ContributingHazard, BBox]] = {}
         self._last_event_id: str = ""
+        # Dedup state: last emitted (hazard-type set, unified score).
+        self._last_emit_key: frozenset[str] = frozenset()
+        self._last_emit_score: float = -1.0
 
     async def initialize(self) -> None:
         await self.event_bus.subscribe("flood_forecasts", self.handle_signal)
@@ -79,14 +85,24 @@ class CompoundEventAgent(BaseAgent):
 
         if len(self._active) >= _MIN_HAZARDS:
             threat = await self._synthesize()
-            if threat is not None:
-                await self.event_bus.emit("compound_threats", threat.model_dump())
-                self.log_action(
-                    "emit_compound_threat",
-                    f"{len(threat.contributing_hazards)} co-occurring hazards → "
-                    f"unified threat {threat.unified_threat_score:.0%}. {threat.summary}",
-                    threat.confidence,
-                )
+            if threat is None:
+                return
+            # Dedup / anti-flood (#A): emit only when the active hazard-type set
+            # changes OR the unified score moved materially since last emission.
+            # Keyed on the hazard-type SET (not event_id, which is per-signal).
+            key = frozenset(h.hazard_type for h in threat.contributing_hazards)
+            score = threat.unified_threat_score
+            if key == self._last_emit_key and abs(score - self._last_emit_score) <= _SCORE_DELTA:
+                return
+            self._last_emit_key = key
+            self._last_emit_score = score
+            await self.event_bus.emit("compound_threats", threat.model_dump())
+            self.log_action(
+                "emit_compound_threat",
+                f"{len(threat.contributing_hazards)} co-occurring hazards -> "
+                f"unified threat {threat.unified_threat_score:.0%}. {threat.summary}",
+                threat.confidence,
+            )
 
     # ── Classification ───────────────────────────────────────────────
 
@@ -155,17 +171,27 @@ class CompoundEventAgent(BaseAgent):
     # ── Synthesis ────────────────────────────────────────────────────
 
     async def _synthesize(self) -> CompoundThreat | None:
-        hazards = [h for (_, h, _) in self._active.values()]
-        bboxes = [b for (_, _, b) in self._active.values()]
-        if not hazards:
+        # Spatial correlation (#4): only hazards whose bbox overlaps at least one
+        # other active hazard's bbox can compound; isolated hazards don't.
+        active = list(self._active.values())
+        if len(active) < _MIN_HAZARDS:
             return None
+        kept = [
+            (h, b) for (_, h, b) in active
+            if any(self._bbox_overlap(b, ob) for (_, oh, ob) in active if oh is not h)
+        ]
+        if len(kept) < _MIN_HAZARDS:
+            return None
+        hazards = [h for (h, _) in kept]
+        bboxes = [b for (_, b) in kept]
 
         severities = [h.severity for h in hazards]
-        # Compounding amplification: co-occurrence raises risk above the max
-        # single-hazard severity (bounded at 1.0).
+        # Deterministic pre-LLM fusion (#5): base = max single-hazard severity,
+        # amplified by co-occurrence; amplification is capped so base*amp <= 1.0.
         base = max(severities)
-        amplification = 1.0 + 0.15 * (len(hazards) - 1)
-        det_score = min(1.0, base * amplification)
+        amplification = min(1.0 / base if base > 0 else 1.0,
+                            1.0 + 0.15 * (len(hazards) - 1))
+        det_score = round(min(1.0, base * amplification), 3)
         bounds = self._quantify_uncertainty(severities, ensemble_spread=severities)
         region = self._merge_bboxes(bboxes)
         hotspot = GeoJsonGeometry(
@@ -228,6 +254,12 @@ class CompoundEventAgent(BaseAgent):
         if not factors:
             factors.append("Concurrent hazards strain the same response capacity")
         return factors
+
+    @staticmethod
+    def _bbox_overlap(a: BBox, b: BBox) -> bool:
+        """True if two bounding boxes intersect (any shared area)."""
+        return not (a.east < b.west or b.east < a.west
+                    or a.north < b.south or b.north < a.south)
 
     @staticmethod
     def _merge_bboxes(bboxes: list[BBox]) -> BBox:

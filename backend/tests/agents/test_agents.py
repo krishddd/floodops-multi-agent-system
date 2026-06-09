@@ -93,6 +93,52 @@ async def test_compound_requires_two_hazards(event_bus, nokey_llm):
 
 
 @pytest.mark.asyncio
+async def test_compound_dedup_one_emission_per_hazard_set(event_bus, nokey_llm):
+    """B4: repeated signals of an already-present hazard type at a similar score
+    must NOT re-emit — one emission per new hazard-type combination."""
+    agent = CompoundEventAgent(event_bus, llm=nokey_llm)
+    emitted = []
+
+    async def cap(channel, payload):
+        emitted.append(payload)
+
+    await event_bus.subscribe("compound_threats", cap)
+
+    # flood + glof → first compound emission.
+    await agent.handle_signal("flood_forecasts", {"max_probability": 0.9, "bbox": _BBOX,
+                                                  "event_id": "e1"})
+    await agent.handle_signal("glof_emergencies", {"integrity_score": 0.2, "bbox": _BBOX,
+                                                   "event_id": "e1"})
+    assert len(emitted) == 1
+
+    # Another flood signal at a similar score, same {flood, glof} set → NO re-emit.
+    await agent.handle_signal("flood_forecasts", {"max_probability": 0.91, "bbox": _BBOX,
+                                                  "event_id": "e2"})
+    assert len(emitted) == 1, "dedup failed — re-emitted on repeat hazard type"
+
+    # A NEW hazard type (disease) changes the set → emit again.
+    await agent.handle_signal("disease_risk",
+                              {"hotspots": [{"risk_score": 0.8}], "bbox": _BBOX, "event_id": "e3"})
+    assert len(emitted) == 2
+
+
+@pytest.mark.asyncio
+async def test_compound_no_overlap_no_compound(event_bus, nokey_llm):
+    """B4 spatial: hazards in non-overlapping regions must not compound."""
+    agent = CompoundEventAgent(event_bus, llm=nokey_llm)
+    emitted = []
+
+    async def cap(channel, payload):
+        emitted.append(payload)
+
+    await event_bus.subscribe("compound_threats", cap)
+    far = {"south": 10.0, "west": 10.0, "north": 10.5, "east": 10.5}
+    await agent.handle_signal("flood_forecasts", {"max_probability": 0.9, "bbox": _BBOX})
+    await agent.handle_signal("glof_emergencies", {"integrity_score": 0.2, "bbox": far})
+    assert emitted == []
+
+
+@pytest.mark.asyncio
 async def test_compound_score_within_bounds_and_validates(event_bus, fake_llm):
     agent = CompoundEventAgent(event_bus, llm=fake_llm)
     await agent.handle_signal("flood_forecasts", {"max_probability": 0.9, "bbox": _BBOX,

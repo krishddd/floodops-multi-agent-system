@@ -54,9 +54,23 @@ class UrbanRiskAgent(BaseAgent):
             await self.event_bus.emit("urban_risk", report.model_dump())
             self.log_action(
                 "emit_urban_risk",
-                f"Mapped {len(report.zones)} zones, {report.total_population_at_risk} people at risk",
+                f"Mapped {len(report.zones)} zones, {report.total_population_at_risk} "
+                f"people at risk. Multi-scale rollup — {self._multiscale_summary(report.zones)}",
                 0.8,
             )
+
+    @staticmethod
+    def _multiscale_summary(zones) -> str:
+        """Watershed → district → street rollup: max risk per district."""
+        districts: dict[str, float] = {}
+        for z in zones:
+            # District inferred from zone name (Kathmandu valley municipalities).
+            name = getattr(z, "zone_name", "") or ""
+            district = next((d for d in ("Kirtipur", "Lalitpur", "Bagmati", "Patan",
+                                          "Bhaktapur", "Thimi") if d in name), "Other")
+            districts[district] = max(districts.get(district, 0.0), getattr(z, "risk_score", 0.0))
+        ranked = sorted(districts.items(), key=lambda t: t[1], reverse=True)
+        return "; ".join(f"{d} {r:.0%}" for d, r in ranked[:4])
 
     async def map_urban_risk(self, forecast_data: dict[str, Any]) -> Optional[UrbanRiskReport]:
         """Intersect flood forecast with urban layers.
@@ -77,8 +91,12 @@ class UrbanRiskAgent(BaseAgent):
         max_prob = forecast_data.get("max_probability", 0.5)
         event_id = forecast_data.get("event_id", str(uuid.uuid4()))
 
+        # Real OSM building footprints (keyless Overpass) when a connector is
+        # wired — biases per-zone buildings_at_risk; falls back to mock otherwise.
+        osm_buildings = await self._fetch_osm_buildings(bbox)
+
         # Generate mock zone reports, then LLM-enrich the high-risk ones.
-        zones = self._generate_mock_zones(bbox, max_prob)
+        zones = self._generate_mock_zones(bbox, max_prob, osm_buildings=osm_buildings)
         zones = [await self._enrich_zone(z) for z in zones]
         routes = self._generate_mock_routes(zones)
         total_pop = sum(z.population for z in zones if z.risk_level in ("HIGH", "CRITICAL"))
@@ -135,8 +153,26 @@ class UrbanRiskAgent(BaseAgent):
             or zone.competing_hypothesis,
         })
 
-    def _generate_mock_zones(self, bbox: BBox, max_prob: float) -> list[ZoneRiskReport]:
-        """Generate realistic zone risk reports for demo."""
+    async def _fetch_osm_buildings(self, bbox: BBox) -> int | None:
+        """Total OSM building count for the bbox (real); None on failure/no connector."""
+        if self.connector is None:
+            return None
+        try:
+            data = await self.connector.fetch_latest(bbox=bbox)
+            count = int((data or {}).get("buildings_count") or 0)
+            return count or None
+        except Exception as exc:
+            self._logger.warning("OSM fetch failed: %s", exc)
+            return None
+
+    def _generate_mock_zones(
+        self, bbox: BBox, max_prob: float, osm_buildings: int | None = None
+    ) -> list[ZoneRiskReport]:
+        """Generate realistic zone risk reports for demo.
+
+        When ``osm_buildings`` (real OSM count) is provided, per-zone
+        buildings_at_risk are derived from it rather than a random guess.
+        """
         import random
         random.seed(123)
 
@@ -146,11 +182,17 @@ class UrbanRiskAgent(BaseAgent):
             ("zone_5", "Bhaktapur Old Town"), ("zone_6", "Thimi Agricultural"),
         ]
 
+        # Even share of real OSM buildings across zones (when available).
+        per_zone_buildings = (osm_buildings // len(zone_names)) if osm_buildings else None
+
         zones = []
         for zone_id, zone_name in zone_names:
             prob = min(1.0, max_prob * random.uniform(0.3, 1.2))
             depth = round(prob * random.uniform(0.5, 4.0), 1)
             pop = random.randint(2000, 25000)
+            # Real building exposure scaled by flood probability, else mock.
+            buildings = (int(per_zone_buildings * prob) if per_zone_buildings
+                         else random.randint(50, 500))
 
             if prob > 0.8:
                 risk = "CRITICAL"
@@ -170,7 +212,7 @@ class UrbanRiskAgent(BaseAgent):
                 flood_probability=round(prob, 2),
                 predicted_depth_m=depth,
                 drainage_gap_mm=round(random.uniform(0, 80), 1),
-                buildings_at_risk=random.randint(50, 500),
+                buildings_at_risk=buildings,
                 key_assets=random.sample(
                     ["Hospital", "School", "Power Station", "Water Treatment", "Bridge"],
                     k=random.randint(1, 3),

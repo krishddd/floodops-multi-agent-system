@@ -18,6 +18,7 @@ from typing import Any, Optional
 
 from floodops.agents.base import BaseAgent, _as_dict
 from floodops.llm.prompts import PREDICT_AGENT_SYSTEM_PROMPT
+from floodops.models.causal import CausalGraph
 from floodops.models.enums import AlertLevel, TriggerType
 from floodops.models.reasoning import ReasonedAssessment
 from floodops.models.geo import BBox, GeoJsonFeatureCollection, GeoJsonFeature, GeoJsonGeometry
@@ -91,8 +92,11 @@ class FloodPredictAgent(BaseAgent):
         watershed_id = alert.get("watershed_id", "unknown")
         bbox = self._extract_bbox(alert)
 
-        # --- STUB: Generate realistic ensemble data ---
-        ensemble_members = self._generate_mock_ensemble(bbox, 50)
+        # Real keyless rainfall (Open-Meteo) biases the ensemble intensity when a
+        # connector is wired; otherwise the deterministic mock is used unchanged.
+        intensity, rain_source = await self._rainfall_intensity(bbox)
+
+        ensemble_members = self._generate_mock_ensemble(bbox, 50, intensity=intensity)
         representative_ids = self._select_representatives(ensemble_members, k=10)
 
         # Aggregate into probability map
@@ -127,8 +131,8 @@ class FloodPredictAgent(BaseAgent):
             value=max_prob,
             confidence=max(0.1, top.agreement_strength if top else 0.5),
             summary=det_summary,
-            causal_factors=["antecedent soil moisture", "rainfall intensity",
-                            "watershed routing"],
+            causal_factors=([f"rainfall ({rain_source})", "antecedent soil moisture"]
+                            + CausalGraph.from_config().ranked_causal_factors()[:3]),
             competing_hypothesis=competing,
         )
         assessment = await self._ensemble_vote(
@@ -151,6 +155,20 @@ class FloodPredictAgent(BaseAgent):
             f"[depth 90% CI {max(0.0, bounds.aleatoric_low):.2f}–"
             f"{bounds.aleatoric_high:.2f}m, "
             f"reasoning confidence {assessment.confidence:.0%}]"
+        )
+
+        # Agent memory: recall the closest historical analogue (if recall is
+        # enabled) and remember this forecast for future events.
+        analogues = self.recall_similar(
+            f"flood {watershed_id} probability {max_prob:.0%} rainfall {rain_source}"
+        )
+        if analogues:
+            top = analogues[0]
+            summary += f" Closest historical analogue: {top.summary} (sim {top.similarity})."
+        self.remember(
+            f"Flood {watershed_id}: {max_prob:.0%} probability, {rain_source}, "
+            f"dominant {disagreements[0].dominant_outcome if disagreements else 'n/a'}.",
+            {"watershed_id": watershed_id, "max_probability": max_prob},
         )
 
         forecast = FloodForecast(
@@ -176,6 +194,28 @@ class FloodPredictAgent(BaseAgent):
 
     # ── Mock data generation (to be replaced with real models) ──────
 
+    async def _rainfall_intensity(self, bbox: BBox) -> tuple[float, str]:
+        """Derive an ensemble-intensity multiplier from real rainfall.
+
+        Uses the injected connector's Open-Meteo 72h rainfall total. Returns
+        (multiplier, source). Falls back to (1.0, "mock") with no connector or
+        on any error — so behaviour is unchanged without live data.
+        """
+        if self.connector is None:
+            return 1.0, "mock"
+        try:
+            data = await self.connector.fetch_latest(bbox=bbox)
+            rain = (data or {}).get("rainfall") or {}
+            total = float(rain.get("total_72h_mm") or 0.0)
+            if total <= 0:
+                return 1.0, "openmeteo(0mm)"
+            # Map 0–200mm/72h → ~0.7–2.0× intensity (saturating).
+            mult = max(0.7, min(2.0, 0.7 + total / 150.0))
+            return round(mult, 2), f"openmeteo({total:.0f}mm/72h)"
+        except Exception as exc:
+            self._logger.warning("rainfall fetch failed: %s", exc)
+            return 1.0, "mock"
+
     def _extract_bbox(self, alert: dict[str, Any]) -> BBox:
         bbox_data = alert.get("bbox")
         if bbox_data and isinstance(bbox_data, dict):
@@ -185,11 +225,14 @@ class FloodPredictAgent(BaseAgent):
         lng = loc.get("lng", 85.3)
         return BBox(south=lat - 0.5, west=lng - 0.5, north=lat + 0.5, east=lng + 0.5)
 
-    def _generate_mock_ensemble(self, bbox: BBox, n_members: int) -> list[EnsembleMember]:
+    def _generate_mock_ensemble(
+        self, bbox: BBox, n_members: int, intensity: float = 1.0
+    ) -> list[EnsembleMember]:
         """Generate statistically realistic ensemble members.
 
         Creates a spread of outcomes — some catastrophic, most moderate,
-        a few minimal — to demonstrate spaghetti plot divergence.
+        a few minimal — to demonstrate spaghetti plot divergence. ``intensity``
+        (derived from real rainfall when a connector is wired) scales peak depths.
         """
         import random
         random.seed(42)
@@ -199,8 +242,9 @@ class FloodPredictAgent(BaseAgent):
         members = []
 
         for i in range(n_members):
-            # Vary peak depth across members (log-normal-like distribution)
-            depth_factor = random.lognormvariate(0.5, 0.8)
+            # Vary peak depth across members (log-normal-like distribution),
+            # scaled by real-rainfall intensity when available.
+            depth_factor = random.lognormvariate(0.5, 0.8) * intensity
             peak_depth = min(max(depth_factor, 0.1), 8.0)
 
             # Classify outcome

@@ -31,12 +31,18 @@ class OSMConnector(BaseConnector):
 
     OVERPASS_BASE = "https://overpass-api.de/api/interpreter"
 
+    def __init__(self, **kwargs: Any) -> None:
+        # Building/road data is near-static — cache aggressively (#13).
+        kwargs.setdefault("cache_ttl_seconds", 86400)
+        super().__init__(**kwargs)
+
     async def health_check(self) -> bool:
+        # Overpass /api/status returns plain text (not JSON), so check the raw
+        # HTTP status rather than fetch_with_retry (which parses JSON).
         try:
-            data = await self.fetch_with_retry(
-                "https://overpass-api.de/api/status",
-            )
-            return True
+            client = await self._get_client()
+            resp = await client.get("https://overpass-api.de/api/status")
+            return resp.status_code < 500
         except Exception:
             return False
 

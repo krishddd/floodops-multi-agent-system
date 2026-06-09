@@ -77,10 +77,17 @@ async def lifespan(app: FastAPI):
     # Shared LLM concurrency cap — created here (inside the running loop, after
     # config load), then installed on BaseAgent so every agent's ensemble/
     # reflexion calls are bounded. Default 1 = sequential (tier-1 RPM safe).
-    from floodops.agents.base import set_llm_semaphore
+    from floodops.agents.base import set_agent_memory, set_llm_semaphore
     llm_semaphore = asyncio.Semaphore(LLM_ENSEMBLE_CONCURRENCY)
     _app_state["_llm_semaphore"] = llm_semaphore
     set_llm_semaphore(llm_semaphore)
+
+    # Shared agent memory (historical-event recall). Semantic recall activates
+    # only when sentence-transformers is installed (keyless); otherwise disabled.
+    from floodops.llm.memory import AgentMemory
+    agent_memory = AgentMemory()
+    _app_state["agent_memory"] = agent_memory
+    set_agent_memory(agent_memory)
 
     from floodops.agents.sentinel import SentinelAgent
     from floodops.agents.glof import GLOFAgent
@@ -97,11 +104,20 @@ async def lifespan(app: FastAPI):
     await orchestrator.initialize()
     _app_state["orchestrator"] = orchestrator
 
+    # Keyless real-data connectors (Open-Meteo rainfall/discharge, OSM Overpass).
+    # Injected into the agents that consume them; everything degrades to mock
+    # generation when a source is unreachable.
+    from floodops.connectors.openmeteo import OpenMeteoConnector
+    from floodops.connectors.osm import OSMConnector
+    openmeteo = OpenMeteoConnector()
+    osm = OSMConnector()
+    _app_state["connectors"] = {"openmeteo": openmeteo, "osm": osm}
+
     agents = [
-        SentinelAgent(event_bus=event_bus, llm=llm_client),
+        SentinelAgent(event_bus=event_bus, llm=llm_client, connector=openmeteo),
         GLOFAgent(event_bus=event_bus, llm=llm_client),
-        FloodPredictAgent(event_bus=event_bus, llm=llm_client),
-        UrbanRiskAgent(event_bus=event_bus, llm=llm_client),
+        FloodPredictAgent(event_bus=event_bus, llm=llm_client, connector=openmeteo),
+        UrbanRiskAgent(event_bus=event_bus, llm=llm_client, connector=osm),
         AlertAgent(event_bus=event_bus, llm=llm_client),
         ResourceAgent(event_bus=event_bus, llm=llm_client),
         DiseaseRiskAgent(event_bus=event_bus, llm=llm_client),
@@ -138,6 +154,9 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
+    from floodops.obs import setup_logging
+    setup_logging()
+
     app = FastAPI(
         title="FloodOps v3",
         description="Multi-agent flood orchestration system — UI-first architecture",
@@ -177,13 +196,47 @@ def create_app() -> FastAPI:
 
     @app.get("/health")
     async def health():
-        # Minimal liveness contract for Docker/CI; enriched in Phase B1 with
-        # per-connector + agent + LLM status.
+        """Aggregate readiness: agents, LLM, and each connector (live/mock)."""
         llm = _app_state.get("llm_client")
+        agents = _app_state.get("agents", [])
+        connectors = _app_state.get("connectors", {})
+
+        conn_status: dict[str, Any] = {}
+        for name, conn in connectors.items():
+            try:
+                ok = await asyncio.wait_for(conn.health_check(), timeout=3.0)
+            except Exception:
+                ok = False
+            conn_status[name] = {
+                "is_mock": getattr(conn, "is_mock", True),
+                "reachable": bool(ok),
+                "status": "mock" if getattr(conn, "is_mock", True)
+                          else ("live" if ok else "error"),
+            }
+
         return {
             "status": "ok",
-            "agents": len(_app_state.get("agents", [])),
+            "agents": [getattr(a, "agent_id", "?") for a in agents],
             "llm_available": bool(llm and llm.available()),
+            "connectors": conn_status,
         }
+
+    @app.get("/metrics")
+    async def metrics():
+        """Prometheus exposition (dev-only, in-memory counters — reset on restart)."""
+        from fastapi import Response
+        from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Gauge, generate_latest
+
+        bus = _app_state.get("event_bus")
+        reg = CollectorRegistry()
+        emits = Gauge("floodops_channel_emits", "Events emitted per channel",
+                      ["channel"], registry=reg)
+        errors = Gauge("floodops_handler_errors_total", "Handler errors", registry=reg)
+        if bus is not None:
+            m = bus.get_metrics()
+            for channel, count in m.get("emit_counts", {}).items():
+                emits.labels(channel=channel).set(count)
+            errors.set(m.get("handler_errors", 0))
+        return Response(generate_latest(reg), media_type=CONTENT_TYPE_LATEST)
 
     return app

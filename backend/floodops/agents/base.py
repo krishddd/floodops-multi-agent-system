@@ -50,6 +50,17 @@ def set_llm_semaphore(sem: Optional["asyncio.Semaphore"]) -> None:
     _LLM_SEMAPHORE = sem
 
 
+# Shared agent-memory store (historical-event recall), installed in the lifespan.
+# None until installed; recall is a no-op without it. Dev-only / not restart-safe.
+_AGENT_MEMORY: Any = None
+
+
+def set_agent_memory(memory: Any) -> None:
+    """Install the shared AgentMemory (called from the lifespan)."""
+    global _AGENT_MEMORY
+    _AGENT_MEMORY = memory
+
+
 class _NullCtx:
     async def __aenter__(self) -> None:
         return None
@@ -107,9 +118,15 @@ class BaseAgent(ABC):
     agent_id: str = "base"
     trigger_types: set[TriggerType] = set()
 
-    def __init__(self, event_bus: EventBus, llm: Optional["FloodLLMClient"] = None) -> None:
+    def __init__(
+        self,
+        event_bus: EventBus,
+        llm: Optional["FloodLLMClient"] = None,
+        connector: Any = None,
+    ) -> None:
         self.event_bus = event_bus
         self.llm = llm  # optional — None means deterministic mock fallbacks
+        self.connector = connector  # optional data connector (keyless real data)
         self._audit_buffer: list[AuditEntry] = []
         self._logger = logging.getLogger(f"floodops.agents.{self.agent_id}")
 
@@ -267,6 +284,19 @@ class BaseAgent(ABC):
         median_val = statistics.median(values)
         consensus = min(results, key=lambda r: abs(_num(r) - median_val))
         return consensus
+
+    # ── Agent memory (historical-event recall) ───────────────────────
+
+    def remember(self, summary: str, metadata: Optional[dict[str, Any]] = None) -> None:
+        """Store an event summary in the shared memory (no-op if disabled)."""
+        if _AGENT_MEMORY is not None:
+            _AGENT_MEMORY.remember(self.agent_id, summary, metadata)
+
+    def recall_similar(self, query: str, k: int = 3) -> list[Any]:
+        """Recall up to k semantically-similar past events ([] if disabled)."""
+        if _AGENT_MEMORY is not None:
+            return _AGENT_MEMORY.recall_similar(query, k)
+        return []
 
     def _quantify_uncertainty(
         self,

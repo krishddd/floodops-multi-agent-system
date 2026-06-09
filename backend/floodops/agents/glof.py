@@ -46,8 +46,8 @@ class GLOFAgent(BaseAgent):
     agent_id: str = "glof_agent"
     trigger_types: set[TriggerType] = {TriggerType.CRON, TriggerType.HTTP_DIRECT}
 
-    def __init__(self, event_bus: EventBus, llm=None) -> None:
-        super().__init__(event_bus, llm)
+    def __init__(self, event_bus: EventBus, llm=None, connector=None) -> None:
+        super().__init__(event_bus, llm, connector)
         self._lake_inventory: list[dict[str, Any]] = []
         self._previous_reports: dict[str, LakeHealthReport] = {}
 
