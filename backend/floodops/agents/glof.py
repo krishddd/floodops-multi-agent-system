@@ -46,8 +46,8 @@ class GLOFAgent(BaseAgent):
     agent_id: str = "glof_agent"
     trigger_types: set[TriggerType] = {TriggerType.CRON, TriggerType.HTTP_DIRECT}
 
-    def __init__(self, event_bus: EventBus) -> None:
-        super().__init__(event_bus)
+    def __init__(self, event_bus: EventBus, llm=None) -> None:
+        super().__init__(event_bus, llm)
         self._lake_inventory: list[dict[str, Any]] = []
         self._previous_reports: dict[str, LakeHealthReport] = {}
 
@@ -115,7 +115,7 @@ class GLOFAgent(BaseAgent):
                 await self._trigger_emergency(report)
             else:
                 # Normal queue for routine monitoring
-                await self.event_bus.emit("glof_reports", report)
+                await self.event_bus.emit("glof_reports", report.model_dump())
                 self.log_action(
                     action="emit_lake_health",
                     reasoning=(
@@ -260,13 +260,14 @@ class GLOFAgent(BaseAgent):
         )
 
         # Direct call — bypasses queue
+        emergency_payload = emergency.model_dump()
         try:
-            await self.event_bus.direct_call("alert_agent", emergency)
+            await self.event_bus.direct_call("alert_agent", emergency_payload)
         except KeyError:
             self._logger.error("AlertAgent not registered for direct calls!")
 
         # Also emit to queue for state recording
-        await self.event_bus.emit("glof_emergencies", emergency)
+        await self.event_bus.emit("glof_emergencies", emergency_payload)
 
         self.log_action(
             action="glof_emergency_bypass",

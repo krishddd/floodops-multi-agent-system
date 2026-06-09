@@ -14,8 +14,10 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from floodops.agents.base import BaseAgent
+from floodops.agents.base import BaseAgent, _as_dict
+from floodops.llm.prompts import RESOURCE_AGENT_SYSTEM_PROMPT
 from floodops.models.enums import TriggerType
+from floodops.models.reasoning import ReasonedAssessment
 from floodops.models.geo import Coordinate, GeoJsonGeometry
 from floodops.models.resource import (
     DistributionPlan,
@@ -38,8 +40,9 @@ class ResourceAgent(BaseAgent):
         await self.event_bus.subscribe("disease_risk", self.handle_disease_risk)
         self.log_action("initialize", "ResourceAgent subscribed to flood_forecasts and disease_risk", 1.0)
 
-    async def handle_forecast(self, forecast_data: dict[str, Any]) -> None:
+    async def handle_forecast(self, channel: str, forecast_data: Any) -> None:
         """Pre-position supplies if probability > 50% and 12+ hours to peak."""
+        forecast_data = _as_dict(forecast_data)
         max_prob = forecast_data.get("max_probability", 0)
         if max_prob < 0.5:
             self.log_action("skip_preposition", f"Probability {max_prob:.0%} below 50% threshold", 0.9)
@@ -47,18 +50,37 @@ class ResourceAgent(BaseAgent):
 
         orders = await self.preposition_supplies(forecast_data)
         if orders:
+            peak_eta = forecast_data.get("timing", {}).get("confidence_interval_hours", 12)
+            mock = ReasonedAssessment(
+                agent_id=self.agent_id,
+                value=min(1.0, max_prob),
+                confidence=max(0.1, max_prob),
+                summary=(f"Pre-positioning at {max_prob:.0%} forecast probability "
+                         f"with ~{peak_eta:.0f}h to peak."),
+                causal_factors=["forecast probability", "hours-to-peak", "staging capacity"],
+            )
+            assessment = await self._run_with_reflexion(
+                system=RESOURCE_AGENT_SYSTEM_PROMPT,
+                data={"max_probability": max_prob, "hours_to_peak": peak_eta,
+                      "n_orders": len(orders.logistics_orders)},
+                context=None,
+                schema=ReasonedAssessment,
+                mock=mock,
+            )
             await self.event_bus.emit("resource_orders", orders.model_dump())
             self.log_action(
                 "preposition",
-                f"Generated {len(orders.logistics_orders)} logistics orders, supplies prepositioned",
-                0.85,
+                f"Generated {len(orders.logistics_orders)} logistics orders, "
+                f"supplies prepositioned. {assessment.summary}",
+                assessment.confidence,
             )
 
     async def handle_event(self, channel: str, payload: Any) -> None:
         pass
 
-    async def handle_disease_risk(self, risk_data: dict[str, Any]) -> None:
+    async def handle_disease_risk(self, channel: str, risk_data: Any) -> None:
         """Distribute medical supplies to disease hotspots post-flood."""
+        risk_data = _as_dict(risk_data)
         plans = self._generate_distribution_plans(risk_data)
         if plans:
             orders = ResourceOrders(

@@ -7,7 +7,7 @@ from datetime import datetime
 
 from fastapi import APIRouter
 
-from floodops.api.app import get_state
+from floodops.api.app import get_latest_urban, get_state
 from floodops.models.geo import GeoJsonFeature, GeoJsonFeatureCollection, GeoJsonGeometry
 
 router = APIRouter()
@@ -38,7 +38,31 @@ def _kathmandu_flood_zones() -> GeoJsonFeatureCollection:
 
 @router.get("/flood-zones")
 async def get_flood_zones():
-    return _kathmandu_flood_zones().model_dump()
+    """Flood-zone polygons for the GeoJsonLayer.
+
+    Geometry comes from the Kathmandu demo footprints (the urban model emits
+    zone risk without polygons); when a live UrbanRiskReport exists, its
+    per-zone risk_score / confidence / reasoning are merged onto the polygons
+    so the map and "why" cards reflect live agent reasoning.
+    """
+    fc = _kathmandu_flood_zones()
+    urban = get_latest_urban()
+    if urban and urban.get("zones"):
+        live = urban["zones"]
+        for i, feature in enumerate(fc.features):
+            if i < len(live):
+                z = live[i]
+                feature.properties.update({
+                    "risk_score": z.get("risk_score", feature.properties.get("risk_score")),
+                    "confidence": z.get("confidence", feature.properties.get("confidence")),
+                    "risk_level": z.get("risk_level", feature.properties.get("risk_level")),
+                    "predicted_depth_m": z.get("predicted_depth_m",
+                                               feature.properties.get("predicted_depth_m")),
+                    "population": z.get("population", feature.properties.get("population")),
+                    "reasoning": z.get("reasoning"),
+                    "source": "live",
+                })
+    return fc.model_dump()
 
 
 @router.get("/flood-depth")

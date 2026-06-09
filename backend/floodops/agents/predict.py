@@ -16,8 +16,10 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from floodops.agents.base import BaseAgent
+from floodops.agents.base import BaseAgent, _as_dict
+from floodops.llm.prompts import PREDICT_AGENT_SYSTEM_PROMPT
 from floodops.models.enums import AlertLevel, TriggerType
+from floodops.models.reasoning import ReasonedAssessment
 from floodops.models.geo import BBox, GeoJsonFeatureCollection, GeoJsonFeature, GeoJsonGeometry
 from floodops.models.predict import (
     EnsembleDisagreement,
@@ -52,8 +54,9 @@ class FloodPredictAgent(BaseAgent):
         """Required by BaseAgent. We subscribe to specific handlers instead."""
         pass
 
-    async def handle_anomaly(self, alert: dict[str, Any]) -> None:
+    async def handle_anomaly(self, channel: str, alert: Any) -> None:
         """Process an anomaly alert from SentinelAgent."""
+        alert = _as_dict(alert)
         forecast = await self.run_ensemble(alert)
         if forecast:
             await self.event_bus.emit("flood_forecasts", forecast.model_dump())
@@ -64,8 +67,9 @@ class FloodPredictAgent(BaseAgent):
                 forecast.max_probability,
             )
 
-    async def handle_glof_alert(self, alert: dict[str, Any]) -> None:
+    async def handle_glof_alert(self, channel: str, alert: Any) -> None:
         """Process a GLOF probabilistic alert (not emergency bypass)."""
+        alert = _as_dict(alert)
         forecast = await self.run_glof_scenario(alert)
         if forecast:
             await self.event_bus.emit("flood_forecasts", forecast.model_dump())
@@ -97,7 +101,57 @@ class FloodPredictAgent(BaseAgent):
         depth_grid = self._build_depth_grid(ensemble_members, watershed_id, bbox)
         disagreements = self._compute_disagreements(ensemble_members)
 
+        # Deterministic ensemble probability drives phase routing (safety —
+        # the LLM never overrides this number).
         max_prob = prob_map.max_probability
+
+        # ── Core-3: uncertainty quantification + ensemble-vote reasoning ──
+        depths = [m.peak_depth_m for m in ensemble_members]
+        bounds = self._quantify_uncertainty(depths, ensemble_spread=depths)
+
+        det_summary = (
+            f"Ensemble forecast: {max_prob:.0%} max probability, peak in "
+            f"{timing.confidence_interval_hours:.0f}h (±{timing.confidence_interval_hours:.0f}h). "
+            f"Agreement: {disagreements[0].agreement_strength:.0%} on "
+            f"{disagreements[0].dominant_outcome} outcome."
+            if disagreements else f"Ensemble forecast: {max_prob:.0%} max probability."
+        )
+        # Mock assessment = deterministic result; LLM (if keyed) refines summary.
+        top = disagreements[0] if disagreements else None
+        competing = (
+            "Rainfall could shift, reducing impact to minor flooding"
+            if top and top.minimal_pct > 0.2 else None
+        )
+        mock_assessment = ReasonedAssessment(
+            agent_id=self.agent_id,
+            value=max_prob,
+            confidence=max(0.1, top.agreement_strength if top else 0.5),
+            summary=det_summary,
+            causal_factors=["antecedent soil moisture", "rainfall intensity",
+                            "watershed routing"],
+            competing_hypothesis=competing,
+        )
+        assessment = await self._ensemble_vote(
+            system=PREDICT_AGENT_SYSTEM_PROMPT,
+            data={
+                "watershed_id": watershed_id,
+                "member_peak_depths_m": [round(d, 2) for d in depths],
+                "outcome_breakdown": disagreements[0].model_dump() if disagreements else {},
+                "deterministic_max_probability": max_prob,
+                "peak_eta_hours": timing.confidence_interval_hours,
+            },
+            context={"depth_p5_p95": [round(bounds.aleatoric_low, 2),
+                                      round(bounds.aleatoric_high, 2)]},
+            schema=ReasonedAssessment,
+            mock=mock_assessment,
+        )
+
+        summary = (
+            f"{assessment.summary} "
+            f"[depth 90% CI {max(0.0, bounds.aleatoric_low):.2f}–"
+            f"{bounds.aleatoric_high:.2f}m, "
+            f"reasoning confidence {assessment.confidence:.0%}]"
+        )
 
         forecast = FloodForecast(
             forecast_id=str(uuid.uuid4()),
@@ -111,10 +165,7 @@ class FloodPredictAgent(BaseAgent):
             ensemble_members=ensemble_members,
             representative_members=representative_ids,
             zone_disagreements=disagreements,
-            summary=f"Ensemble forecast: {max_prob:.0%} max probability, "
-                    f"peak in {timing.confidence_interval_hours:.0f}h (±{timing.confidence_interval_hours:.0f}h). "
-                    f"Agreement: {disagreements[0].agreement_strength:.0%} on {disagreements[0].dominant_outcome} outcome."
-                    if disagreements else None,
+            summary=summary,
         )
         return forecast
 

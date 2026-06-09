@@ -8,14 +8,22 @@ no generic "You are a flood expert" narration.
 
 from __future__ import annotations
 
-import os
-from typing import Any, Optional
+from typing import Any, Optional, TypeVar
 
-from floodops.config import GOOGLE_GENAI_API_KEY
+from pydantic import BaseModel
+
+from floodops.llm.providers import LLMProvider, make_provider
+
+T = TypeVar("T", bound=BaseModel)
 
 
 class FloodLLMClient:
-    """Google Gemini client for FloodOps reasoning.
+    """Provider-agnostic LLM client for FloodOps reasoning.
+
+    Delegates to an ``LLMProvider`` (Anthropic Claude or Google Gemini,
+    selected by ``FLOODOPS_LLM_PROVIDER``). With no API key configured the
+    underlying provider is a ``NullProvider`` and every method degrades to a
+    safe template/mock response — so the system boots and demos with no key.
 
     Capabilities:
     1. Spatial "why" cards — data-grounded explanations per map feature
@@ -23,45 +31,72 @@ class FloodLLMClient:
     3. Situation reports — structured summary for decision-makers
     4. Interactive chat — answer questions about the current flood state
     5. Anomaly interpretation — translate z-scores to plain language
+    6. analyze() / critique() — structured reasoning for the core-3 helpers
     """
 
-    def __init__(self, api_key: Optional[str] = None, model: str = "gemini-2.5-flash"):
-        self._api_key = api_key or GOOGLE_GENAI_API_KEY
-        self._model = model
-        self._client = None
+    def __init__(
+        self,
+        api_key: Optional[str] = None,  # retained for backwards-compat callers
+        model: Optional[str] = None,
+        provider: Optional[LLMProvider] = None,
+    ):
+        self._provider: LLMProvider = provider or make_provider()
 
-    def _get_client(self):
-        if self._client is None:
-            try:
-                from google import genai
-                self._client = genai.Client(api_key=self._api_key)
-            except ImportError:
-                self._client = None
-        return self._client
+    def available(self) -> bool:
+        """True when a real LLM backend is configured and reachable."""
+        return self._provider.available()
 
     async def generate(self, prompt: str, system_instruction: Optional[str] = None) -> str:
-        """Generate text using Gemini.
+        """Generate free text via the configured provider.
 
-        Falls back to template-based generation if SDK not available or key not set.
+        Falls back to a clearly-labelled template string when no key is set.
         """
-        client = self._get_client()
-        if client and self._api_key:
-            try:
-                config = {}
-                if system_instruction:
-                    config["system_instruction"] = system_instruction
+        if self._provider.available():
+            return await self._provider.generate(prompt, system=system_instruction)
+        return (
+            "[LLM response placeholder — configure ANTHROPIC_API_KEY or "
+            f"GOOGLE_GENAI_API_KEY for real reasoning]\n\n{prompt[:200]}..."
+        )
 
-                response = client.models.generate_content(
-                    model=self._model,
-                    contents=prompt,
-                    config=config if config else None,
-                )
-                return response.text or ""
-            except Exception as e:
-                return f"[LLM unavailable: {e}] Falling back to template response."
+    async def analyze(
+        self,
+        system: str,
+        data: Any,
+        context: Optional[dict[str, Any]] = None,
+        output_schema: type[T] = None,  # type: ignore[assignment]
+    ) -> Optional[T]:
+        """Structured reasoning: return a validated ``output_schema`` instance.
 
-        # Fallback — return a structured template response
-        return f"[LLM response placeholder — configure GOOGLE_GENAI_API_KEY for real reasoning]\n\n{prompt[:200]}..."
+        Returns ``None`` when no LLM is configured so callers fall back to their
+        deterministic mock. Matches the Reflexion pattern used by BaseAgent.
+        """
+        if not self._provider.available() or output_schema is None:
+            return None
+        import json
+
+        prompt_parts = [f"DATA:\n{json.dumps(data, default=str, indent=2)}"]
+        if context:
+            prompt_parts.append(f"\nCONTEXT:\n{json.dumps(context, default=str, indent=2)}")
+        prompt = "\n".join(prompt_parts)
+        return await self._provider.generate_structured(prompt, output_schema, system=system)
+
+    async def critique(self, result: Any) -> str:
+        """Self-critique a prior assessment (Reflexion step).
+
+        Returns an empty string with no LLM configured so the reflexion loop
+        simply retries with unchanged data (a no-op critique).
+        """
+        if not self._provider.available():
+            return ""
+        import json
+
+        prompt = (
+            "You are a rigorous reviewer. Critique the following flood-risk "
+            "assessment. Identify weak assumptions, missing uncertainty, and "
+            "data-quality concerns. Be specific and concise.\n\n"
+            f"ASSESSMENT:\n{json.dumps(result, default=str, indent=2)}"
+        )
+        return await self._provider.generate(prompt)
 
     async def generate_why_card(self, feature_data: dict[str, Any]) -> dict[str, Any]:
         """Generate spatial 'why' card content for a map feature."""

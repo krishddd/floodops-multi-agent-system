@@ -16,8 +16,10 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from floodops.agents.base import BaseAgent
+from floodops.agents.base import BaseAgent, _as_dict
+from floodops.llm.prompts import URBAN_AGENT_SYSTEM_PROMPT
 from floodops.models.enums import TriggerType
+from floodops.models.reasoning import ReasonedAssessment
 from floodops.models.geo import BBox, GeoJsonFeatureCollection, GeoJsonGeometry
 from floodops.models.urban import (
     RouteSet,
@@ -44,8 +46,9 @@ class UrbanRiskAgent(BaseAgent):
     async def handle_event(self, channel: str, payload: Any) -> None:
         pass
 
-    async def handle_forecast(self, forecast_data: dict[str, Any]) -> None:
+    async def handle_forecast(self, channel: str, forecast_data: Any) -> None:
         """Process incoming flood forecast and generate urban risk report."""
+        forecast_data = _as_dict(forecast_data)
         report = await self.map_urban_risk(forecast_data)
         if report:
             await self.event_bus.emit("urban_risk", report.model_dump())
@@ -74,8 +77,9 @@ class UrbanRiskAgent(BaseAgent):
         max_prob = forecast_data.get("max_probability", 0.5)
         event_id = forecast_data.get("event_id", str(uuid.uuid4()))
 
-        # Generate mock zone reports
+        # Generate mock zone reports, then LLM-enrich the high-risk ones.
         zones = self._generate_mock_zones(bbox, max_prob)
+        zones = [await self._enrich_zone(z) for z in zones]
         routes = self._generate_mock_routes(zones)
         total_pop = sum(z.population for z in zones if z.risk_level in ("HIGH", "CRITICAL"))
 
@@ -90,6 +94,46 @@ class UrbanRiskAgent(BaseAgent):
             mapping_complete=True,  # Gate condition for orchestrator
         )
         return report
+
+    async def _enrich_zone(self, zone: ZoneRiskReport) -> ZoneRiskReport:
+        """Reflexion-refine reasoning + confidence for HIGH/CRITICAL zones.
+
+        No-ops (returns the zone unchanged) when no LLM is configured or the
+        zone is not high-risk — preserving the deterministic mock output.
+        """
+        if zone.risk_level not in ("HIGH", "CRITICAL") or not self._llm_ready():
+            return zone
+
+        mock = ReasonedAssessment(
+            agent_id=self.agent_id,
+            value=zone.risk_score,
+            confidence=max(0.1, zone.confidence),
+            summary=zone.reasoning,
+            causal_factors=["drainage capacity gap", "impervious surface",
+                            "population density"],
+            competing_hypothesis=zone.competing_hypothesis,
+        )
+        assessment = await self._run_with_reflexion(
+            system=URBAN_AGENT_SYSTEM_PROMPT,
+            data={
+                "zone_name": zone.zone_name,
+                "flood_probability": zone.flood_probability,
+                "predicted_depth_m": zone.predicted_depth_m,
+                "population": zone.population,
+                "drainage_gap_mm": zone.drainage_gap_mm,
+                "key_assets": zone.key_assets,
+                "buildings_at_risk": zone.buildings_at_risk,
+            },
+            context={"risk_level": zone.risk_level},
+            schema=ReasonedAssessment,
+            mock=mock,
+        )
+        return zone.model_copy(update={
+            "reasoning": assessment.summary,
+            "confidence": assessment.confidence,
+            "competing_hypothesis": assessment.competing_hypothesis
+            or zone.competing_hypothesis,
+        })
 
     def _generate_mock_zones(self, bbox: BBox, max_prob: float) -> list[ZoneRiskReport]:
         """Generate realistic zone risk reports for demo."""

@@ -28,6 +28,25 @@ GOOGLE_REDIRECT_URI: str = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:80
 GOOGLE_GENAI_API_KEY: str = os.getenv("GOOGLE_GENAI_API_KEY", "")
 
 # ---------------------------------------------------------------------------
+# LLM reasoning core (provider-agnostic)
+# ---------------------------------------------------------------------------
+# Anthropic (Claude). Key added later by the operator — degrades gracefully.
+ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+# Which provider the reasoning core targets: "anthropic" | "gemini" | "auto".
+# "auto" picks the first provider whose key is set, else a no-op NullProvider.
+FLOODOPS_LLM_PROVIDER: str = os.getenv("FLOODOPS_LLM_PROVIDER", "auto")
+# Default model ids per provider (overridable via env).
+ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-8")
+GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+# Effort for adaptive-thinking Anthropic calls: low | medium | high | xhigh | max
+ANTHROPIC_EFFORT: str = os.getenv("ANTHROPIC_EFFORT", "medium")
+
+# Core-3 technique tuning (used by BaseAgent reasoning helpers).
+LLM_ENSEMBLE_RUNS: int = int(os.getenv("LLM_ENSEMBLE_RUNS", "3"))
+LLM_REFLEXION_MAX_RETRIES: int = int(os.getenv("LLM_REFLEXION_MAX_RETRIES", "3"))
+LLM_CONFIDENCE_FLOOR: float = float(os.getenv("LLM_CONFIDENCE_FLOOR", "0.75"))
+
+# ---------------------------------------------------------------------------
 # External data connectors
 # ---------------------------------------------------------------------------
 API_USGS_PAT: str = os.getenv("API_USGS_PAT", "")

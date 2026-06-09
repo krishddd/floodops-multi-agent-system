@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from floodops.agents.base import BaseAgent
+from floodops.agents.base import BaseAgent, _as_dict
 from floodops.models.enums import SeverityLevel, TriggerType
 from floodops.models.alert import (
     AlertDispatch,
@@ -50,8 +50,9 @@ class AlertAgent(BaseAgent):
     async def handle_event(self, channel: str, payload: Any) -> None:
         pass
 
-    async def handle_forecast(self, forecast_data: dict[str, Any]) -> None:
+    async def handle_forecast(self, channel: str, forecast_data: Any) -> None:
         """Process flood forecast and dispatch appropriate alerts."""
+        forecast_data = _as_dict(forecast_data)
         max_prob = forecast_data.get("max_probability", 0)
         severity = self.assess_level(max_prob)
 
@@ -73,6 +74,7 @@ class AlertAgent(BaseAgent):
         This is the time-critical path. GLOFAgent calls this directly
         when dam integrity drops below 0.3. Seconds matter.
         """
+        payload = _as_dict(payload)
         dispatch = await self.dispatch_alerts(payload, SeverityLevel.EMERGENCY, is_glof=True)
         await self.event_bus.emit("alert_dispatches", dispatch.model_dump())
         self.log_action(

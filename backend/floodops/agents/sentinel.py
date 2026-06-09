@@ -57,8 +57,8 @@ class SentinelAgent(BaseAgent):
     agent_id: str = "sentinel_agent"
     trigger_types: set[TriggerType] = {TriggerType.CRON}
 
-    def __init__(self, event_bus: EventBus) -> None:
-        super().__init__(event_bus)
+    def __init__(self, event_bus: EventBus, llm=None) -> None:
+        super().__init__(event_bus, llm)
         # Baselines keyed by (watershed_id, metric)
         self._baselines: dict[tuple[str, str], Baseline] = {}
         # Recent readings for multi-sensor correlation
@@ -109,7 +109,7 @@ class SentinelAgent(BaseAgent):
             self._recent_readings.append(reading)
             anomaly = self._detect_anomaly(reading)
             if anomaly is not None:
-                await self.event_bus.emit("anomaly_alerts", anomaly)
+                await self.event_bus.emit("anomaly_alerts", anomaly.model_dump())
                 self.log_action(
                     action="emit_anomaly_alert",
                     reasoning=(
@@ -157,7 +157,7 @@ class SentinelAgent(BaseAgent):
             # Anomaly detection
             anomaly = self._detect_anomaly(reading)
             if anomaly is not None:
-                await self.event_bus.emit("anomaly_alerts", anomaly)
+                await self.event_bus.emit("anomaly_alerts", anomaly.model_dump())
 
         # Check for flood recession
         await self._check_recession()
@@ -314,7 +314,7 @@ class SentinelAgent(BaseAgent):
                     flood_depth_max_m=peak_val,
                     timestamp=datetime.utcnow(),
                 )
-                await self.event_bus.emit("flood_receding", event)
+                await self.event_bus.emit("flood_receding", event.model_dump())
                 self._logger.info(
                     "Flood receding detected at gauge %s: peak=%.2fm, current=%.2fm",
                     gauge_id, peak_val, values[-1],

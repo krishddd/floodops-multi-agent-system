@@ -3,13 +3,31 @@ from __future__ import annotations
 import random
 from datetime import datetime, timedelta
 from fastapi import APIRouter
+from floodops.api.app import get_latest_forecast
 from floodops.models.geo import GeoJsonGeometry
 
 router = APIRouter()
 
 @router.get("/members")
 async def get_ensemble_members(time: str = "T+24h"):
-    """Return ensemble member flood-front boundaries for spaghetti rendering."""
+    """Return ensemble member flood-front boundaries for spaghetti rendering.
+
+    Serves live FloodPredictAgent ensemble members when a forecast exists;
+    otherwise falls back to the demo generator below (cold start).
+    """
+    forecast = get_latest_forecast()
+    if forecast and forecast.get("ensemble_members"):
+        members = [
+            {
+                "member_id": m.get("member_id"),
+                "flood_front": m.get("flood_front"),
+                "peak_depth_m": m.get("peak_depth_m"),
+                "outcome": m.get("outcome_category"),
+            }
+            for m in forecast["ensemble_members"]
+        ]
+        return {"time": time, "members": members, "count": len(members), "source": "live"}
+
     random.seed(42)
     center_lat, center_lng = 27.7, 85.32
     members = []
@@ -39,7 +57,24 @@ async def get_probability_fan(lat: float = 27.7, lng: float = 85.32):
 
 @router.get("/disagreement")
 async def get_disagreement(zone_id: str = "zone_1"):
-    """Return ensemble disagreement breakdown for a zone."""
+    """Return ensemble disagreement breakdown for a zone.
+
+    Serves the live FloodPredictAgent disagreement when available.
+    """
+    forecast = get_latest_forecast()
+    if forecast and forecast.get("zone_disagreements"):
+        d = forecast["zone_disagreements"][0]
+        return {
+            "zone_id": d.get("zone_id", zone_id),
+            "catastrophic_pct": d.get("catastrophic_pct"),
+            "severe_pct": d.get("severe_pct"),
+            "moderate_pct": d.get("moderate_pct"),
+            "minimal_pct": d.get("minimal_pct"),
+            "dominant_outcome": d.get("dominant_outcome"),
+            "agreement_strength": d.get("agreement_strength"),
+            "source": "live",
+        }
+
     random.seed(hash(zone_id))
     cat = round(random.uniform(0.1, 0.5), 2)
     sev = round(random.uniform(0.2, 0.4), 2)

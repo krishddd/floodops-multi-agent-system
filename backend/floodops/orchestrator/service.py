@@ -22,12 +22,21 @@ class OrchestratorService:
         self._lock = asyncio.Lock()
 
     async def initialize(self) -> None:
-        """Subscribe to events that trigger state machine advancement."""
-        self.event_bus.subscribe("flood_forecasts", self.handle_forecast)
-        self.event_bus.subscribe("urban_risk_reports", self.handle_urban_risk)
-        self.event_bus.subscribe("alert_dispatches", self.handle_dispatch)
-        self.event_bus.subscribe("glof_alerts", self.handle_glof)
-        
+        """Subscribe to events that trigger state machine advancement.
+
+        NOTE: ``subscribe`` is a coroutine — it MUST be awaited or the
+        subscription is silently dropped (and the orchestrator never advances
+        phases). Channel names must match what the agents actually emit:
+        UrbanRiskAgent emits ``urban_risk``; GLOFAgent emits ``glof_emergencies``.
+        """
+        await self.event_bus.subscribe("flood_forecasts", self.handle_forecast)
+        await self.event_bus.subscribe("urban_risk", self.handle_urban_risk)
+        await self.event_bus.subscribe("alert_dispatches", self.handle_dispatch)
+        await self.event_bus.subscribe("glof_emergencies", self.handle_glof)
+        await self.event_bus.subscribe("disease_risk", self.handle_disease)
+        await self.event_bus.subscribe("resource_orders", self.handle_resource)
+        await self.event_bus.subscribe("compound_threats", self.handle_compound)
+
         # Also ensure state is correctly set
         if "flood_state" not in self.global_state:
             from floodops.models.state import create_initial_state
@@ -54,39 +63,43 @@ class OrchestratorService:
                     "event_id": new_state.get("event_id", "")
                 })
 
-    async def handle_forecast(self, payload: dict[str, Any]) -> None:
+    async def handle_forecast(self, channel: str, payload: dict[str, Any]) -> None:
         state = self.global_state["flood_state"]
-        forecasts = state.get("flood_forecasts", [])
-        # We need to parse or append the payload.
-        # But in LangGraph, state updates are typically handled by nodes.
-        # Here we just inject into global state and let the graph route based on it.
-        # Wait, Pydantic objects or dicts? payload is dict.
-        forecasts.append(payload)
-        state["flood_forecasts"] = forecasts
-        
+        state.setdefault("flood_forecasts", []).append(payload)
         await self._step_graph()
 
-    async def handle_urban_risk(self, payload: dict[str, Any]) -> None:
+    async def handle_urban_risk(self, channel: str, payload: dict[str, Any]) -> None:
         state = self.global_state["flood_state"]
-        reports = state.get("urban_risk_reports", [])
-        reports.append(payload)
-        state["urban_risk_reports"] = reports
+        state.setdefault("urban_risk_reports", []).append(payload)
         state["urban_mapping_complete"] = True
-        
         await self._step_graph()
 
-    async def handle_dispatch(self, payload: dict[str, Any]) -> None:
+    async def handle_dispatch(self, channel: str, payload: dict[str, Any]) -> None:
         state = self.global_state["flood_state"]
-        dispatches = state.get("alert_dispatches", [])
-        dispatches.append(payload)
-        state["alert_dispatches"] = dispatches
+        state.setdefault("alert_dispatches", []).append(payload)
         state["evacuation_routes_published"] = True
-        
         await self._step_graph()
 
-    async def handle_glof(self, payload: dict[str, Any]) -> None:
+    async def handle_glof(self, channel: str, payload: dict[str, Any]) -> None:
         state = self.global_state["flood_state"]
+        state.setdefault("glof_emergencies", []).append(payload)
         state["is_glof_breach"] = True
-        
+        await self._step_graph()
+
+    async def handle_disease(self, channel: str, payload: dict[str, Any]) -> None:
+        state = self.global_state["flood_state"]
+        state.setdefault("disease_risk_reports", []).append(payload)
+        state["outbreak_risk_cleared"] = bool(payload.get("outbreak_risk_cleared", False))
+        await self._step_graph()
+
+    async def handle_resource(self, channel: str, payload: dict[str, Any]) -> None:
+        state = self.global_state["flood_state"]
+        state.setdefault("resource_orders", []).append(payload)
+        state["supplies_prepositioned"] = bool(payload.get("supplies_prepositioned", True))
+        await self._step_graph()
+
+    async def handle_compound(self, channel: str, payload: dict[str, Any]) -> None:
+        state = self.global_state["flood_state"]
+        state.setdefault("compound_threats", []).append(payload)
         await self._step_graph()
 

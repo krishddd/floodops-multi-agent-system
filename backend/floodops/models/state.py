@@ -24,6 +24,7 @@ from floodops.models.urban import UrbanRiskReport
 from floodops.models.alert import AlertDispatch
 from floodops.models.resource import ResourceOrders
 from floodops.models.disease import DiseaseRiskReport
+from floodops.models.compound import CompoundThreat
 from floodops.models.orchestrator import AuditEntry, StateTransitionEvent
 
 
@@ -67,6 +68,7 @@ class FloodSystemState(TypedDict, total=False):
     disease_risk_reports: Annotated[list[DiseaseRiskReport], operator.add]
     alert_dispatches: Annotated[list[AlertDispatch], operator.add]
     flood_receding_events: Annotated[list[FloodRecedingEvent], operator.add]
+    compound_threats: Annotated[list[CompoundThreat], operator.add]
 
     # ── Gate conditions ─────────────────────────────────────────────
     # The orchestrator WILL NOT transition phases until these are True
@@ -104,6 +106,7 @@ def create_initial_state(event_id: str = "system-init") -> FloodSystemState:
         disease_risk_reports=[],
         alert_dispatches=[],
         flood_receding_events=[],
+        compound_threats=[],
         urban_mapping_complete=False,
         evacuation_routes_published=False,
         supplies_prepositioned=False,

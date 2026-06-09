@@ -16,8 +16,10 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
-from floodops.agents.base import BaseAgent
+from floodops.agents.base import BaseAgent, _as_dict
+from floodops.llm.prompts import DISEASE_AGENT_SYSTEM_PROMPT
 from floodops.models.enums import Pathogen, TriggerType
+from floodops.models.reasoning import ReasonedAssessment
 from floodops.models.geo import BBox, GeoJsonFeatureCollection
 from floodops.models.disease import (
     DiseaseRiskMap,
@@ -40,17 +42,53 @@ class DiseaseRiskAgent(BaseAgent):
     async def handle_event(self, channel: str, payload: Any) -> None:
         pass
 
-    async def handle_flood_receding(self, event_data: dict[str, Any]) -> None:
+    async def handle_flood_receding(self, channel: str, event_data: Any) -> None:
         """Model disease risk once flood waters begin receding."""
+        event_data = _as_dict(event_data)
         report = await self.forecast_disease_risk(event_data)
         if report:
+            assessment = await self._assess_outbreak(report, event_data)
             await self.event_bus.emit("disease_risk", report.model_dump())
             self.log_action(
                 "emit_disease_risk",
                 f"Identified {len(report.hotspots)} hotspots, "
-                f"generated {len(report.supply_orders)} supply orders",
-                0.75,
+                f"generated {len(report.supply_orders)} supply orders. "
+                f"{assessment.summary}",
+                assessment.confidence,
             )
+
+    async def _assess_outbreak(self, report, event_data: dict[str, Any]) -> ReasonedAssessment:
+        """3-run ensemble consensus on the dominant-pathogen outbreak risk.
+
+        Falls back to a deterministic assessment when no LLM is configured.
+        """
+        top = max(report.hotspots, key=lambda h: h.risk_score, default=None)
+        top_risk = top.risk_score if top else 0.0
+        mock = ReasonedAssessment(
+            agent_id=self.agent_id,
+            value=top_risk,
+            confidence=max(0.1, top_risk if top_risk else 0.5),
+            summary=(
+                f"Dominant risk: {top.pathogen.value} at {top_risk:.0%} "
+                f"({top.population_exposed:,} exposed)." if top
+                else "No hotspots above outbreak threshold."
+            ),
+            causal_factors=["contaminated water", "sanitation breakdown", "crowding"],
+        )
+        return await self._ensemble_vote(
+            system=DISEASE_AGENT_SYSTEM_PROMPT,
+            data={
+                "flood_depth_max_m": event_data.get("flood_depth_max_m"),
+                "flood_duration_hours": event_data.get("flood_duration_hours"),
+                "hotspots": [
+                    {"pathogen": h.pathogen.value, "risk": h.risk_score,
+                     "exposed": h.population_exposed} for h in report.hotspots
+                ],
+            },
+            context=None,
+            schema=ReasonedAssessment,
+            mock=mock,
+        )
 
     async def forecast_disease_risk(self, event_data: dict[str, Any]) -> Optional[DiseaseRiskReport]:
         """Predict cholera, typhoid, and leptospirosis risk.

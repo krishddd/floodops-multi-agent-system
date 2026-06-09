@@ -88,6 +88,17 @@ async def simulate_flood_event(background_tasks: BackgroundTasks) -> dict:
     return {"status": "simulation_triggered", "alert_id": alert.alert_id, "severity": "HIGH", "z_score": 3.8}
 
 
+@router.get("/compound")
+async def get_compound_threats() -> dict:
+    """Return synthesized multi-hazard compound threats from the CompoundEventAgent."""
+    state = get_state()
+    threats = state.get("compound_threats", [])
+    return {
+        "count": len(threats),
+        "threats": [t.model_dump() if hasattr(t, "model_dump") else t for t in threats[-10:]],
+    }
+
+
 @router.post("/chat")
 async def chat_with_system(message: dict) -> dict:
     reasoner = get_reasoner()
