@@ -254,36 +254,84 @@ class BaseAgent(ABC):
         *,
         runs: int = LLM_ENSEMBLE_RUNS,
     ) -> _T:
-        """3-run consensus for high-stakes numeric predictions.
+        """N-run consensus for high-stakes predictions — heterogeneous in v4.
 
-        Runs ``runs`` independent analyses concurrently and returns the median
-        ``value``/``confidence`` member. Falls back to ``mock`` with no LLM.
+        Runs ``runs`` independent analyses concurrently, round-robined across
+        the client's provider pool (primary + ``LLM_ENSEMBLE_PROVIDERS`` extras)
+        so distinct MODELS vote, not one model self-agreeing. Pool members in
+        429-cooldown are skipped by ``provider_pool()`` — their slots reassign
+        to the remaining providers; ensemble size never shrinks. Falls back to
+        ``mock`` with no LLM.
+
+        Aggregation (pinned semantics): structured Pydantic outputs only —
+        float fields take the **median** across runs; Enum/Literal fields take
+        the **plurality**; free-text and list fields are taken whole from the
+        **median-confidence run** (ties broken by lower pool-priority index)
+        so prose stays internally consistent.
         """
         if not self._llm_ready():
             return mock
 
+        pool = (self.llm.provider_pool()
+                if hasattr(self.llm, "provider_pool") else [None])
+        if len(pool) == 1 and getattr(self.llm, "_extra_providers", []):
+            self._logger.warning(
+                "ensemble pool degraded to primary only — extra providers "
+                "unavailable or cooling down"
+            )
+        n = max(1, runs)
+        assignments = [(i % len(pool), pool[i % len(pool)]) for i in range(n)]
+
         # Each _analyze acquires the shared semaphore (bounded concurrency) and
         # is per-call-timeout protected; failures resolve to None and are dropped.
         tasks = [
-            self._analyze(system=system, data=data, context=context, output_schema=schema)
-            for _ in range(max(1, runs))
+            self._analyze(system=system, data=data, context=context,
+                          output_schema=schema, provider=prov)
+            for _, prov in assignments
         ]
         gathered = await asyncio.gather(*tasks, return_exceptions=True)
-        results = [r for r in gathered if r is not None and not isinstance(r, Exception)]
+        results = [
+            (pool_idx, r)
+            for (pool_idx, _), r in zip(assignments, gathered, strict=True)
+            if r is not None and not isinstance(r, Exception)
+        ]
         if not results:
             return mock
-        # Consensus = member nearest the median 'value' (fallback: 'confidence').
-        def _num(r: Any) -> float:
-            for attr in ("value", "confidence", "max_probability"):
-                v = getattr(r, attr, None)
-                if isinstance(v, (int, float)):
-                    return float(v)
-            return 0.0
+        return self._aggregate_votes(results, schema)
 
-        values = sorted(_num(r) for r in results)
-        median_val = statistics.median(values)
-        consensus = min(results, key=lambda r: abs(_num(r) - median_val))
-        return consensus
+    @staticmethod
+    def _aggregate_votes(results: list[tuple[int, _T]], schema: type[_T]) -> _T:
+        """Field-wise consensus across ensemble runs (see _ensemble_vote)."""
+        import enum
+        from typing import Literal, get_origin
+
+        def _conf(r: Any) -> float:
+            v = getattr(r, "confidence", None)
+            return float(v) if isinstance(v, (int, float)) else 0.0
+
+        median_conf = statistics.median(sorted(_conf(r) for _, r in results))
+        # Median-confidence member; tie-break = lower pool-priority index.
+        _, base = min(results, key=lambda t: (abs(_conf(t[1]) - median_conf), t[0]))
+
+        updates: dict[str, Any] = {}
+        for fname, finfo in schema.model_fields.items():
+            vals = [getattr(r, fname, None) for _, r in results]
+            nums = [float(v) for v in vals
+                    if isinstance(v, (int, float)) and not isinstance(v, bool)]
+            ann = finfo.annotation
+            is_cat = (isinstance(ann, type) and issubclass(ann, enum.Enum)) or \
+                     get_origin(ann) is Literal
+            if len(nums) == len(results) and nums:
+                updates[fname] = statistics.median(nums)
+            elif is_cat:
+                present = [v for v in vals if v is not None]
+                if present:
+                    counts: dict[Any, int] = {}
+                    for v in present:
+                        counts[v] = counts.get(v, 0) + 1
+                    updates[fname] = max(counts, key=lambda k: counts[k])
+            # else: free text / lists — keep the median-confidence member's.
+        return base.model_copy(update=updates) if updates else base
 
     # ── Agent memory (historical-event recall) ───────────────────────
 

@@ -242,6 +242,27 @@ class FloodForecast(BaseModel):
                     "F1 stays >= SKILLFUL_F1_THRESHOLD for the headline return period."
     )
 
+    # GloFAS benchmark reference (paper-faithful: streamflow is NEVER a model
+    # input — these fields compare our forecast against the state-of-the-art
+    # benchmark the way Nearing et al. 2024 do, using real basin-specific
+    # return-period thresholds fit from the 1984→present GloFAS reanalysis).
+    benchmark_discharge_thresholds_m3s: dict[int, float] | None = Field(
+        None,
+        description="Per-basin return-period discharge thresholds (m³/s) fit from "
+                    "the historical GloFAS reanalysis via Weibull plotting positions "
+                    "(Bulletin 17B framing). Keys are return periods in years."
+    )
+    benchmark_peak_discharge_m3s: float | None = Field(
+        None,
+        description="Peak of the GloFAS forecast-discharge ensemble mean over the "
+                    "forecast horizon (m³/s). Benchmark reference only."
+    )
+    benchmark_return_period_years: int | None = Field(
+        None,
+        description="Return period the GloFAS benchmark forecast itself reaches "
+                    "against the basin's fitted thresholds. None = sub-1-yr."
+    )
+
     generated_at: datetime = Field(default_factory=datetime.utcnow)
 
     # LLM interpretation

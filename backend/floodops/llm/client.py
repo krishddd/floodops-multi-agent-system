@@ -39,20 +39,57 @@ class FloodLLMClient:
         api_key: str | None = None,  # retained for backwards-compat callers
         model: str | None = None,
         provider: LLMProvider | None = None,
+        extra_providers: list[LLMProvider] | None = None,
     ):
         self._provider: LLMProvider = provider or make_provider()
+        # v4 heterogeneous ensemble pool: extra backends whose models vote
+        # alongside the primary in BaseAgent._ensemble_vote.
+        self._extra_providers: list[LLMProvider] = list(extra_providers or [])
 
     def available(self) -> bool:
-        """True when a real LLM backend is configured and reachable."""
-        return self._provider.available()
+        """True when any backend in the provider chain is reachable."""
+        return any(p.available() for p in [self._provider, *self._extra_providers])
+
+    def provider_pool(self) -> list[LLMProvider]:
+        """Ensemble pool in priority order: primary first, then extras.
+
+        Currently-unavailable extras (no key, or 429-cooldown via
+        ``CooldownProvider``) are skipped — their ensemble slots are thereby
+        reassigned to the remaining providers. The primary is always included
+        (its own unavailability is handled per-call by ``_pick``).
+        """
+        return [self._provider] + [p for p in self._extra_providers if p.available()]
+
+    def _pick(self, provider: LLMProvider | None = None) -> LLMProvider:
+        """Resolve the provider for one call, falling through the chain.
+
+        Explicit ``provider`` wins. Otherwise the primary — unless it is
+        unavailable (e.g. 429-cooldown), in which case the first available
+        extra takes over. Loudly logged; the final fallback when nothing is
+        available stays the caller's deterministic mock (never silent).
+        """
+        if provider is not None:
+            return provider
+        if self._provider.available() or not self._extra_providers:
+            return self._provider
+        for cand in self._extra_providers:
+            if cand.available():
+                import logging
+                logging.getLogger(__name__).warning(
+                    "primary LLM provider '%s' unavailable — falling through "
+                    "chain to '%s'", self._provider.name, cand.name,
+                )
+                return cand
+        return self._provider
 
     async def generate(self, prompt: str, system_instruction: str | None = None) -> str:
         """Generate free text via the configured provider.
 
         Falls back to a clearly-labelled template string when no key is set.
         """
-        if self._provider.available():
-            return await self._provider.generate(prompt, system=system_instruction)
+        prov = self._pick()
+        if prov.available():
+            return await prov.generate(prompt, system=system_instruction)
         return (
             "[LLM response placeholder — configure ANTHROPIC_API_KEY or "
             f"GOOGLE_GENAI_API_KEY for real reasoning]\n\n{prompt[:200]}..."
@@ -64,13 +101,17 @@ class FloodLLMClient:
         data: Any,
         context: dict[str, Any] | None = None,
         output_schema: type[T] = None,  # type: ignore[assignment]
+        provider: LLMProvider | None = None,
     ) -> T | None:
         """Structured reasoning: return a validated ``output_schema`` instance.
 
         Returns ``None`` when no LLM is configured so callers fall back to their
         deterministic mock. Matches the Reflexion pattern used by BaseAgent.
+        ``provider`` routes this single call to a specific pool member
+        (heterogeneous ensemble-vote); default is the primary provider.
         """
-        if not self._provider.available() or output_schema is None:
+        prov = self._pick(provider)
+        if not prov.available() or output_schema is None:
             return None
         import json
 
@@ -78,7 +119,7 @@ class FloodLLMClient:
         if context:
             prompt_parts.append(f"\nCONTEXT:\n{json.dumps(context, default=str, indent=2)}")
         prompt = "\n".join(prompt_parts)
-        return await self._provider.generate_structured(prompt, output_schema, system=system)
+        return await prov.generate_structured(prompt, output_schema, system=system)
 
     async def critique(self, result: Any) -> str:
         """Self-critique a prior assessment (Reflexion step).
@@ -86,7 +127,8 @@ class FloodLLMClient:
         Returns an empty string with no LLM configured so the reflexion loop
         simply retries with unchanged data (a no-op critique).
         """
-        if not self._provider.available():
+        prov = self._pick()
+        if not prov.available():
             return ""
         import json
 
@@ -96,7 +138,7 @@ class FloodLLMClient:
             "data-quality concerns. Be specific and concise.\n\n"
             f"ASSESSMENT:\n{json.dumps(result, default=str, indent=2)}"
         )
-        return await self._provider.generate(prompt)
+        return await prov.generate(prompt)
 
     async def generate_why_card(self, feature_data: dict[str, Any]) -> dict[str, Any]:
         """Generate spatial 'why' card content for a map feature."""

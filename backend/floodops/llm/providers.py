@@ -32,8 +32,18 @@ from floodops.config import (
     ANTHROPIC_MODEL,
     FLOODOPS_LLM_PROVIDER,
     GEMINI_MODEL,
+    GITHUB_MODELS_MODEL,
+    GITHUB_MODELS_TOKEN,
     GOOGLE_GENAI_API_KEY,
+    GROQ_API_KEY,
+    GROQ_MODEL,
     LLM_MAX_RETRIES,
+    LLM_RATE_LIMIT_COOLDOWN_S,
+    OPENAI_COMPAT_API_KEY,
+    OPENAI_COMPAT_BASE_URL,
+    OPENAI_COMPAT_MODEL,
+    OPENROUTER_API_KEY,
+    OPENROUTER_MODEL,
 )
 
 logger = logging.getLogger(__name__)
@@ -283,6 +293,9 @@ class GeminiProvider:
             )
             return resp.text or ""
         except Exception as exc:
+            if _is_rate_limit(exc):
+                _start_cooldown(self.name)
+                return ""
             logger.warning("GeminiProvider.generate failed: %s", exc)
             return f"[LLM error: {exc}]"
 
@@ -326,6 +339,9 @@ class GeminiProvider:
             if data is not None:
                 return schema.model_validate(data)
         except Exception as exc:
+            if _is_rate_limit(exc):
+                _start_cooldown(self.name)
+                return None
             logger.warning("GeminiProvider structured failed: %s", exc)
         return None
 
@@ -365,28 +381,231 @@ class GeminiProvider:
                 for part in cand.get("content", {}).get("parts", [])
             )
         except Exception as exc:
+            if _is_rate_limit(exc):
+                _start_cooldown(self.name)
             logger.warning("GeminiProvider REST call failed: %s", exc)
             return ""
 
 
-def make_provider(which: str = FLOODOPS_LLM_PROVIDER) -> LLMProvider:
-    """Build a provider from config/env.
+class OpenAICompatProvider:
+    """Any /chat/completions-compatible backend (Groq, OpenRouter, …).
 
-    ``which`` is one of ``anthropic`` | ``gemini`` | ``auto``. ``auto`` returns
-    the first provider whose key is set, else a ``NullProvider``.
+    Speaks the OpenAI wire format over plain ``httpx`` (a hard dependency), so
+    no extra SDK is needed. Free-tier friendly: Groq's LPU inference slashes
+    the latency of multi-step agent loops (ensemble-vote runs N calls), and
+    OpenRouter lets the "brain" be swapped by changing one model string.
+
+    Structured output: requests ``response_format: json_object`` with the JSON
+    schema embedded in the system prompt, then validates with Pydantic; falls
+    back to best-effort JSON extraction for models that ignore the format flag.
+    """
+
+    def __init__(self, name: str, base_url: str, api_key: str, model: str) -> None:
+        self.name = name
+        self._base_url = base_url.rstrip("/")
+        self._api_key = api_key
+        self._model = model
+
+    def available(self) -> bool:
+        return bool(self._api_key and self._base_url and self._model)
+
+    async def _chat(self, messages: list[dict[str, str]], json_mode: bool = False) -> str:
+        import httpx
+
+        body: dict[str, Any] = {"model": self._model, "messages": messages,
+                                "max_tokens": 4096}
+        if json_mode:
+            body["response_format"] = {"type": "json_object"}
+
+        async def _call() -> dict:
+            async with httpx.AsyncClient(timeout=60.0) as http:
+                resp = await http.post(
+                    f"{self._base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {self._api_key}"},
+                    json=body,
+                )
+                resp.raise_for_status()
+                return resp.json()
+
+        data = await _retry(_call, label=f"{self.name}.chat")
+        choices = data.get("choices") or []
+        return (choices[0].get("message") or {}).get("content") or "" if choices else ""
+
+    async def generate(self, prompt: str, system: str | None = None) -> str:
+        if not self.available():
+            return ""
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        try:
+            return await self._chat(messages)
+        except Exception as exc:
+            if _is_rate_limit(exc):
+                _start_cooldown(self.name)
+                return ""
+            logger.warning("%s.generate failed: %s", self.name, exc)
+            return f"[LLM error: {exc}]"
+
+    async def generate_structured(
+        self, prompt: str, schema: type[T], system: str | None = None
+    ) -> T | None:
+        if not self.available():
+            return None
+        sys_prompt = (
+            f"{system or 'You are an expert flood-risk reasoning assistant.'}\n\n"
+            f"Respond with ONLY a JSON object matching this schema:\n"
+            f"{json.dumps(schema.model_json_schema())}"
+        )
+        messages = [{"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": prompt}]
+        for json_mode in (True, False):  # retry w/o format flag if unsupported
+            try:
+                text = await self._chat(messages, json_mode=json_mode)
+                data = _extract_json(text)
+                if data is not None:
+                    return schema.model_validate(data)
+            except Exception as exc:
+                if _is_rate_limit(exc):
+                    _start_cooldown(self.name)
+                    return None
+                logger.warning("%s structured (json_mode=%s) failed: %s",
+                               self.name, json_mode, exc)
+        return None
+
+
+# ── v4: rate-limit cooldown (free-tier safety) ──────────────────────────
+# Module-level cooldown state: provider name → time.monotonic() deadline until
+# which the backend is treated as unavailable. Read/written ONLY from the
+# asyncio event loop (all LLM calls are async; asyncio.to_thread is reserved
+# for SQLite elsewhere) — no locking needed. Multi-worker deployments run the
+# LLM fleet on a single Uvicorn worker in v4; HA is out of scope.
+_PROVIDER_COOLDOWNS: dict[str, float] = {}
+
+
+def _in_cooldown(name: str) -> bool:
+    import time
+
+    return _PROVIDER_COOLDOWNS.get(name, 0.0) > time.monotonic()
+
+
+def _start_cooldown(name: str) -> None:
+    import time
+
+    _PROVIDER_COOLDOWNS[name] = time.monotonic() + LLM_RATE_LIMIT_COOLDOWN_S
+    logger.error(
+        "LLM provider '%s' rate-limited — cooling down for %.0fs; callers fall "
+        "through the provider chain (deterministic mock is the final fallback)",
+        name, LLM_RATE_LIMIT_COOLDOWN_S,
+    )
+
+
+def _is_rate_limit(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "429" in text or "rate limit" in text or "resource_exhausted" in text
+
+
+class CooldownProvider:
+    """Wrap any provider with shared 429-cooldown awareness.
+
+    ``available()`` is False while the wrapped backend is cooling down, so
+    provider chains (and the heterogeneous ensemble pool) skip it instead of
+    hammering a rate-limited free tier. A 429 raised by either call style
+    starts the cooldown and degrades gracefully (empty/None return → the
+    caller's deterministic mock), loudly logged — never a silent Null swap.
+    """
+
+    def __init__(self, inner: LLMProvider) -> None:
+        self._inner = inner
+        self.name = inner.name
+
+    def available(self) -> bool:
+        return not _in_cooldown(self.name) and self._inner.available()
+
+    async def generate(self, prompt: str, system: str | None = None) -> str:
+        if _in_cooldown(self.name):
+            return ""
+        try:
+            return await self._inner.generate(prompt, system=system)
+        except Exception as exc:
+            if _is_rate_limit(exc):
+                _start_cooldown(self.name)
+                return ""
+            raise
+
+    async def generate_structured(
+        self, prompt: str, schema: type[T], system: str | None = None
+    ) -> T | None:
+        if _in_cooldown(self.name):
+            return None
+        try:
+            return await self._inner.generate_structured(prompt, schema, system=system)
+        except Exception as exc:
+            if _is_rate_limit(exc):
+                _start_cooldown(self.name)
+                return None
+            raise
+
+
+def _groq() -> OpenAICompatProvider:
+    return OpenAICompatProvider(
+        "groq", "https://api.groq.com/openai/v1", GROQ_API_KEY, GROQ_MODEL
+    )
+
+
+def _openrouter() -> OpenAICompatProvider:
+    return OpenAICompatProvider(
+        "openrouter", "https://openrouter.ai/api/v1",
+        OPENROUTER_API_KEY, OPENROUTER_MODEL,
+    )
+
+
+def _openai_compat() -> OpenAICompatProvider:
+    return OpenAICompatProvider(
+        "openai-compat", OPENAI_COMPAT_BASE_URL,
+        OPENAI_COMPAT_API_KEY, OPENAI_COMPAT_MODEL,
+    )
+
+
+def _github() -> OpenAICompatProvider:
+    """GitHub Models — OpenAI-compatible gateway authenticated with a GitHub PAT.
+
+    Free tier is demo/eval-grade (strict RPM/TPD caps): the cooldown guard is
+    essential here. Agency deployments swap to a paid endpoint via config.
+    """
+    return OpenAICompatProvider(
+        "github", "https://models.github.ai/inference",
+        GITHUB_MODELS_TOKEN, GITHUB_MODELS_MODEL,
+    )
+
+
+def make_provider(which: str = FLOODOPS_LLM_PROVIDER) -> LLMProvider:
+    """Build a provider from config/env, wrapped in the 429-cooldown guard.
+
+    ``which`` is ``anthropic`` | ``gemini`` | ``groq`` | ``github`` |
+    ``openrouter`` | ``openai-compat`` | ``auto``. ``auto`` returns the first
+    provider whose key is set (Anthropic → Gemini → Groq → GitHub → OpenRouter
+    → custom compat endpoint), else a ``NullProvider`` (never wrapped — it
+    makes no network calls).
     """
     which = (which or "auto").lower()
-    if which == "anthropic":
-        return AnthropicProvider()
-    if which == "gemini":
-        return GeminiProvider()
+    factories = {
+        "anthropic": AnthropicProvider,
+        "gemini": GeminiProvider,
+        "groq": _groq,
+        "github": _github,
+        "openrouter": _openrouter,
+        "openai-compat": _openai_compat,
+        "openai_compat": _openai_compat,
+    }
+    if which in factories:
+        return CooldownProvider(factories[which]())
 
-    # auto — prefer Anthropic, then Gemini, else null.
-    anthropic = AnthropicProvider()
-    if anthropic.available():
-        return anthropic
-    gemini = GeminiProvider()
-    if gemini.available():
-        return gemini
+    # auto — first configured backend wins, else null.
+    for factory in (AnthropicProvider, GeminiProvider, _groq, _github,
+                    _openrouter, _openai_compat):
+        candidate = factory()
+        if candidate.available():
+            return CooldownProvider(candidate)
     logger.info("No LLM key configured — using NullProvider (mock fallbacks active)")
     return NullProvider()

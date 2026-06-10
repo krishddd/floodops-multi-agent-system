@@ -64,8 +64,35 @@ async def lifespan(app: FastAPI):
     # ── Startup ──────────────────────────────────────────────────
     event_bus = EventBus()
     flood_state = create_initial_state()
-    llm_client = FloodLLMClient()
+
+    # ── v4 multi-model fleet ─────────────────────────────────────
+    # Heterogeneous ensemble pool: the primary provider plus the extras named
+    # in LLM_ENSEMBLE_PROVIDERS (e.g. "groq,github") — distinct models vote in
+    # _ensemble_vote. Every provider is wrapped in the 429-cooldown guard by
+    # make_provider; an unavailable extra is simply skipped by the pool.
+    from floodops.config import LLM_ENSEMBLE_PROVIDERS
+    from floodops.llm.providers import make_provider
+
+    primary = make_provider()
+    extras = []
+    for name in (n.strip() for n in LLM_ENSEMBLE_PROVIDERS.split(",") if n.strip()):
+        p = make_provider(name)
+        if p.name != primary.name and p.available():
+            extras.append(p)
+    llm_client = FloodLLMClient(provider=primary, extra_providers=extras)
     reasoner = FloodReasoner(llm_client)
+
+    # Per-agent routing (free-tier friendly, no agent-code changes):
+    #  * fast lane — Groq llama for the high-frequency SentinelAgent;
+    #  * deep lane — GitHub Models gpt-4.1-mini for the two low-frequency deep
+    #    reasoners (compound, urban), falling back to the primary when the
+    #    GitHub free tier is cooling down or unkeyed.
+    fast = make_provider("groq")
+    fast_client = (FloodLLMClient(provider=fast, extra_providers=extras)
+                   if fast.available() else llm_client)
+    deep = make_provider("github")
+    deep_client = (FloodLLMClient(provider=deep, extra_providers=[primary, *extras])
+                   if deep.available() else llm_client)
 
     _app_state["event_bus"] = event_bus
     _app_state["flood_state"] = flood_state
@@ -113,14 +140,14 @@ async def lifespan(app: FastAPI):
     _app_state["connectors"] = {"openmeteo": openmeteo, "osm": osm}
 
     agents = [
-        SentinelAgent(event_bus=event_bus, llm=llm_client, connector=openmeteo),
+        SentinelAgent(event_bus=event_bus, llm=fast_client, connector=openmeteo),
         GLOFAgent(event_bus=event_bus, llm=llm_client),
         FloodPredictAgent(event_bus=event_bus, llm=llm_client, connector=openmeteo),
-        UrbanRiskAgent(event_bus=event_bus, llm=llm_client, connector=osm),
+        UrbanRiskAgent(event_bus=event_bus, llm=deep_client, connector=osm),
         AlertAgent(event_bus=event_bus, llm=llm_client),
         ResourceAgent(event_bus=event_bus, llm=llm_client),
         DiseaseRiskAgent(event_bus=event_bus, llm=llm_client),
-        CompoundEventAgent(event_bus=event_bus, llm=llm_client),
+        CompoundEventAgent(event_bus=event_bus, llm=deep_client),
     ]
     for agent in agents:
         await agent.initialize()
@@ -136,8 +163,13 @@ async def lifespan(app: FastAPI):
 
     event_bus.set_ws_broadcast(_ws_bridge)
 
-    print(f"FloodOps v3 - All {len(agents)} agents initialized "
-          f"(LLM: {'on' if llm_client.available() else 'mock/no-key'})")
+    fleet = [primary.name] + [p.name for p in extras]
+    if fast_client is not llm_client:
+        fleet.append("groq(fast-lane)")
+    if deep_client is not llm_client:
+        fleet.append("github(deep-lane)")
+    print(f"FloodOps v4 - All {len(agents)} agents initialized "
+          f"(LLM fleet: {', '.join(dict.fromkeys(fleet)) if llm_client.available() else 'mock/no-key'})")
     print("LangGraph Orchestrator hooked to Event Bus")
     print("API: http://0.0.0.0:8000")
     print(f"Frontend: {FRONTEND_ORIGIN}")
@@ -217,6 +249,9 @@ def create_app() -> FastAPI:
             "status": "ok",
             "agents": [getattr(a, "agent_id", "?") for a in agents],
             "llm_available": bool(llm and llm.available()),
+            "llm_fleet": ([getattr(p, "name", "?")
+                           for p in llm.provider_pool()]
+                          if llm and hasattr(llm, "provider_pool") else []),
             "connectors": conn_status,
         }
 

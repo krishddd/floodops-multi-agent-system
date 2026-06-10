@@ -33,12 +33,37 @@ GOOGLE_GENAI_API_KEY: str = os.getenv("GOOGLE_GENAI_API_KEY", "")
 # ---------------------------------------------------------------------------
 # Anthropic (Claude). Key added later by the operator — degrades gracefully.
 ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
-# Which provider the reasoning core targets: "anthropic" | "gemini" | "auto".
+# Which provider the reasoning core targets:
+#   "anthropic" | "gemini" | "groq" | "openrouter" | "auto".
 # "auto" picks the first provider whose key is set, else a no-op NullProvider.
 FLOODOPS_LLM_PROVIDER: str = os.getenv("FLOODOPS_LLM_PROVIDER", "auto")
 # Default model ids per provider (overridable via env).
 ANTHROPIC_MODEL: str = os.getenv("ANTHROPIC_MODEL", "claude-opus-4-8")
 GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+# OpenAI-compatible backends (free-tier friendly): Groq (LPU-fast open-weight
+# models) and OpenRouter (single key, any frontier model). Both speak the
+# /chat/completions wire format so one provider class covers them — and any
+# other compatible endpoint via the OPENAI_COMPAT_* overrides.
+GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL: str = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.3-70b-instruct:free")
+OPENAI_COMPAT_BASE_URL: str = os.getenv("OPENAI_COMPAT_BASE_URL", "")
+OPENAI_COMPAT_API_KEY: str = os.getenv("OPENAI_COMPAT_API_KEY", "")
+OPENAI_COMPAT_MODEL: str = os.getenv("OPENAI_COMPAT_MODEL", "")
+# GitHub Models (v4): OpenAI-compatible gateway authenticated with a GitHub PAT.
+# Free tier = demo/eval; agency deployment swaps to a paid endpoint via config.
+GITHUB_MODELS_TOKEN: str = os.getenv("GITHUB_MODELS_TOKEN", "")
+GITHUB_MODELS_MODEL: str = os.getenv("GITHUB_MODELS_MODEL", "openai/gpt-4.1-mini")
+
+# v4 — rate-limit cooldown for free-tier providers: a 429 marks the backend
+# unavailable for this many seconds; callers fall through the provider chain
+# (never silently to Null — the final fallback is the deterministic mock).
+LLM_RATE_LIMIT_COOLDOWN_S: float = float(os.getenv("LLM_RATE_LIMIT_COOLDOWN_S", "300"))
+# v4 — heterogeneous ensemble-vote pool: comma-separated extra provider names
+# (e.g. "groq,github") whose models vote alongside the primary provider.
+# Empty = single-provider ensemble (pre-v4 behavior).
+LLM_ENSEMBLE_PROVIDERS: str = os.getenv("LLM_ENSEMBLE_PROVIDERS", "")
 # Effort for adaptive-thinking Anthropic calls: low | medium | high | xhigh | max
 ANTHROPIC_EFFORT: str = os.getenv("ANTHROPIC_EFFORT", "medium")
 

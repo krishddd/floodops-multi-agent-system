@@ -40,6 +40,30 @@ variant with `docker compose build --build-arg INCLUDE_ML=true backend`.
 
 ---
 
+## v3 — Real flood-frequency analysis + free-tier LLM providers
+
+- **Per-basin return-period thresholds (paper-faithful, keyless):**
+  `floodops/hydrology/return_periods.py` fits 1/2/5/10-yr discharge thresholds
+  from the 1984→present GloFAS reanalysis (Weibull plotting positions on annual
+  maxima, Bulletin 17B framing — the method Nearing et al., Nature 627, 2024
+  derive per-gauge events with). `OpenMeteoConnector.get_historical_discharge()`
+  serves the record keyless (24h cache); FloodPredictAgent fits + caches the
+  thresholds per basin (24h) and attaches a deterministic **GloFAS benchmark
+  reference** to every forecast (`benchmark_discharge_thresholds_m3s`,
+  `benchmark_peak_discharge_m3s`, `benchmark_return_period_years`). Refused
+  (None) below 10 years of record — never faked. Streamflow remains
+  **reference-only, never a model input** (paper safety rule). The depth-based
+  `RETURN_PERIOD_DEPTH_THRESHOLDS_M` constants still drive the mock-ensemble
+  classification; the benchmark fields carry the real basin-specific science.
+  Tests: `tests/test_hydrology.py`.
+- **OpenAI-compatible LLM providers:** `OpenAICompatProvider` (`llm/providers.py`)
+  speaks `/chat/completions` over httpx (no SDK) — covers **Groq**
+  (`GROQ_API_KEY`, default `llama-3.3-70b-versatile`), **OpenRouter**
+  (`OPENROUTER_API_KEY`) and any custom endpoint (`OPENAI_COMPAT_*`, e.g. local
+  Ollama). `FLOODOPS_LLM_PROVIDER` now accepts
+  `anthropic|gemini|groq|openrouter|openai-compat|auto`; auto order is
+  Anthropic → Gemini → Groq → OpenRouter → compat → Null.
+
 ## v2 — Live command deck, observability, real connectors, CI/CD
 
 - **Live WebSocket command deck** (frontend): every agent channel is broadcast as a

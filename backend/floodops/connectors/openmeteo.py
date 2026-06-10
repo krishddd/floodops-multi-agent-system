@@ -21,6 +21,7 @@ their deterministic mock generation.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from floodops.connectors.base import BaseConnector
@@ -138,6 +139,49 @@ class OpenMeteoConnector(BaseConnector):
                 "series": precip[:120],
                 "times": hourly.get("time", [])[:120],
             }
+        except Exception:
+            return None
+
+    async def get_historical_discharge(
+        self, lat: float, lng: float, start_year: int = 1984
+    ) -> dict | None:
+        """Multi-decade GloFAS reanalysis daily discharge — for flood-frequency fits.
+
+        The Open-Meteo flood API serves the GloFAS v4 reanalysis back to 1984
+        (the same record Nearing et al. 2024 compute per-gauge return periods
+        from). This is REFERENCE data for deriving basin-specific return-period
+        thresholds, never a forecast-model input. Cached for 24h via a widened
+        per-call TTL since the record only grows by one day per day. Returns
+        None on failure.
+        """
+        from datetime import date, timedelta
+
+        end = date.today() - timedelta(days=2)  # reanalysis lags realtime
+        cache_key = self._cache_key("hist_discharge", round(lat, 2), round(lng, 2),
+                                    start_year, end.isoformat())
+        cached = self._get_cached(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            data = await self.fetch_with_retry(
+                self.FLOOD_BASE,
+                params={
+                    "latitude": lat, "longitude": lng,
+                    "daily": "river_discharge",
+                    "start_date": f"{start_year}-01-01",
+                    "end_date": end.isoformat(),
+                },
+            )
+            daily = data.get("daily", {})
+            result = {
+                "time": daily.get("time", []),
+                "discharge": daily.get("river_discharge", []),
+            }
+            # Long-lived manual cache entry (base TTL is 900s; this is daily
+            # data): shift the stored timestamp forward so the standard TTL
+            # check keeps it for ~24h.
+            self._cache[cache_key] = (time.time() + 86400 - self._cache_ttl, result)
+            return result
         except Exception:
             return None
 

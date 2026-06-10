@@ -24,6 +24,11 @@ from floodops.config import (
     RETURN_PERIOD_MEMBER_AGREEMENT,
     SKILLFUL_F1_THRESHOLD,
 )
+from floodops.hydrology.return_periods import (
+    annual_maxima,
+    classify_return_period,
+    compute_return_period_thresholds,
+)
 from floodops.llm.prompts import PREDICT_AGENT_SYSTEM_PROMPT
 from floodops.models.causal import CausalGraph
 from floodops.models.enums import TriggerType
@@ -52,6 +57,13 @@ class FloodPredictAgent(BaseAgent):
 
     agent_id: str = "flood_predict_agent"
     trigger_types: list[TriggerType] = [TriggerType.QUEUE]
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        # Per-basin fitted return-period thresholds: (lat, lng) → (expiry, fit).
+        self._rp_threshold_cache: dict[
+            tuple[float, float], tuple[float, dict[int, float] | None]
+        ] = {}
 
     async def initialize(self) -> None:
         """Subscribe to anomaly_alerts and glof_alerts queues."""
@@ -104,6 +116,11 @@ class FloodPredictAgent(BaseAgent):
         # intensity when a connector is wired; otherwise the deterministic mock is
         # used unchanged.
         intensity, rain_source = await self._forcing_intensity(bbox)
+
+        # GloFAS benchmark reference: basin-specific return-period thresholds fit
+        # from the 1984→present reanalysis, and where the benchmark's own forecast
+        # lands against them. Reference only — never an input to our ensemble.
+        bench_thresholds, bench_peak, bench_rp = await self._benchmark_return_period(bbox)
 
         ensemble_members = self._generate_mock_ensemble(bbox, 50, intensity=intensity)
         representative_ids = self._select_representatives(ensemble_members, k=10)
@@ -166,6 +183,13 @@ class FloodPredictAgent(BaseAgent):
             f" Headline event: ~{max_rp}-yr return period."
             if max_rp is not None else " Below 1-yr return-period threshold."
         )
+        if bench_thresholds is not None:
+            bench_label = f"~{bench_rp}-yr" if bench_rp is not None else "sub-1-yr"
+            rp_clause += (
+                f" GloFAS benchmark: peak {bench_peak:.0f} m³/s → {bench_label} event "
+                f"(thresholds fit from {len(bench_thresholds)} return periods, "
+                f"1984→present reanalysis)."
+            )
         if skillful_days is not None:
             rp_clause += f" Skillful warning horizon: {skillful_days} days."
         summary = (
@@ -205,6 +229,9 @@ class FloodPredictAgent(BaseAgent):
             max_return_period_years=max_rp,
             lead_time_skill=lead_skill,
             skillful_lead_days=skillful_days,
+            benchmark_discharge_thresholds_m3s=bench_thresholds,
+            benchmark_peak_discharge_m3s=bench_peak,
+            benchmark_return_period_years=bench_rp,
             summary=summary,
         )
         return forecast
@@ -261,6 +288,55 @@ class FloodPredictAgent(BaseAgent):
         except Exception as exc:
             self._logger.warning("forcing fetch failed: %s", exc)
             return 1.0, "mock"
+
+    async def _benchmark_return_period(
+        self, bbox: BBox
+    ) -> tuple[dict[int, float] | None, float | None, int | None]:
+        """Fit real basin return-period thresholds and classify the GloFAS forecast.
+
+        Paper-aligned (Nearing et al. 2024): per-gauge return-period thresholds
+        come from a flood-frequency fit on the historical record (Bulletin 17B),
+        and forecast skill is framed by which return period an event reaches.
+        Here the historical record is the keyless GloFAS reanalysis (1984→now)
+        at the basin centre, and we classify the GloFAS *forecast* peak against
+        the fitted thresholds — a benchmark reference, never an ensemble input.
+
+        Returns ``(thresholds, forecast_peak_m3s, return_period_years)``; all
+        None when no connector is wired, the record is too short (<10 yrs), or
+        any fetch fails. Thresholds are cached per basin centre for 24h.
+        """
+        if self.connector is None or not hasattr(self.connector, "get_historical_discharge"):
+            return None, None, None
+        c = bbox.center()
+        key = (round(c.lat, 2), round(c.lng, 2))
+        try:
+            cached = self._rp_threshold_cache.get(key)
+            if cached is not None and cached[0] > datetime.utcnow().timestamp():
+                thresholds = cached[1]
+            else:
+                hist = await self.connector.get_historical_discharge(c.lat, c.lng)
+                if not hist:
+                    return None, None, None
+                maxima = annual_maxima(hist.get("time", []), hist.get("discharge", []))
+                thresholds = compute_return_period_thresholds(list(maxima.values()))
+                self._rp_threshold_cache[key] = (
+                    datetime.utcnow().timestamp() + 86400, thresholds
+                )
+            if thresholds is None:
+                return None, None, None
+
+            forecast = await self.connector.get_discharge_ensemble(c.lat, c.lng)
+            # Peak of the ensemble-mean trace (the max trace would overstate;
+            # the mean mirrors how GloFAS exceedances are reported).
+            mean_trace = [v for v in (forecast or {}).get("mean", []) if v is not None]
+            if not mean_trace:
+                return thresholds, None, None
+            peak = max(mean_trace)
+            rp = classify_return_period(peak, thresholds)
+            return thresholds, round(peak, 1), rp
+        except Exception as exc:
+            self._logger.warning("benchmark return-period fit failed: %s", exc)
+            return None, None, None
 
     def _extract_bbox(self, alert: dict[str, Any]) -> BBox:
         bbox_data = alert.get("bbox")
