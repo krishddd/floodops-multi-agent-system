@@ -18,11 +18,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from floodops.config import FRONTEND_ORIGIN, LLM_ENSEMBLE_CONCURRENCY
-from floodops.models.state import FloodSystemState, create_initial_state
-from floodops.queue.event_bus import EventBus
 from floodops.llm.client import FloodLLMClient
 from floodops.llm.reasoning import FloodReasoner
-
+from floodops.models.state import FloodSystemState, create_initial_state
+from floodops.queue.event_bus import EventBus
 
 # ── Global state (shared across routes) ──────────────────────────
 # In production, this would be Redis-backed. For now, in-memory.
@@ -89,14 +88,14 @@ async def lifespan(app: FastAPI):
     _app_state["agent_memory"] = agent_memory
     set_agent_memory(agent_memory)
 
-    from floodops.agents.sentinel import SentinelAgent
+    from floodops.agents.alert import AlertAgent
+    from floodops.agents.compound import CompoundEventAgent
+    from floodops.agents.disease import DiseaseRiskAgent
     from floodops.agents.glof import GLOFAgent
     from floodops.agents.predict import FloodPredictAgent
-    from floodops.agents.urban import UrbanRiskAgent
-    from floodops.agents.alert import AlertAgent
     from floodops.agents.resource import ResourceAgent
-    from floodops.agents.disease import DiseaseRiskAgent
-    from floodops.agents.compound import CompoundEventAgent
+    from floodops.agents.sentinel import SentinelAgent
+    from floodops.agents.urban import UrbanRiskAgent
     from floodops.orchestrator.service import OrchestratorService
 
     # Initialize Graph Orchestrator
@@ -140,7 +139,7 @@ async def lifespan(app: FastAPI):
     print(f"FloodOps v3 - All {len(agents)} agents initialized "
           f"(LLM: {'on' if llm_client.available() else 'mock/no-key'})")
     print("LangGraph Orchestrator hooked to Event Bus")
-    print(f"API: http://0.0.0.0:8000")
+    print("API: http://0.0.0.0:8000")
     print(f"Frontend: {FRONTEND_ORIGIN}")
 
     yield
@@ -174,11 +173,11 @@ def create_app() -> FastAPI:
     )
 
     # Register route modules
+    from floodops.api.routes_auth import router as auth_router
+    from floodops.api.routes_ensemble import router as ensemble_router
     from floodops.api.routes_flood import router as flood_router
     from floodops.api.routes_map import router as map_router
-    from floodops.api.routes_auth import router as auth_router
     from floodops.api.routes_scenario import router as scenario_router
-    from floodops.api.routes_ensemble import router as ensemble_router
     from floodops.api.routes_timeline import router as timeline_router
     from floodops.api.websocket import router as ws_router
 

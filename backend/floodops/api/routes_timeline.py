@@ -1,8 +1,11 @@
 """Timeline frame endpoints for scrubber playback."""
 from __future__ import annotations
+
 import random
 from datetime import datetime, timedelta
+
 from fastapi import APIRouter
+
 from floodops.api.app import get_state
 
 router = APIRouter()
@@ -20,7 +23,7 @@ async def get_timeline_frames(start: str = "-72h", end: str = "+240h", step: str
     for h in range(start_h, end_h + 1, step_hours):
         t = now + timedelta(hours=h)
         is_future = h > 0
-        progress = min(1.0, max(0.0, (h - start_h) / max(1, end_h - start_h)))
+        min(1.0, max(0.0, (h - start_h) / max(1, end_h - start_h)))
 
         # Flood extent grows, peaks, then shrinks
         peak_offset = 24  # flood peaks at T+24h
@@ -61,10 +64,11 @@ async def get_timeline_range():
 
 
 def _phase_for_hour(h: int) -> str:
-    if h < -48: return "00_MONITORING"
-    elif h < -24: return "01_ELEVATED"
-    elif h < -6: return "02_IMMINENT"
-    elif h < 0: return "03_EVACUATION"
-    elif h < 24: return "04_ACTIVE"
-    elif h < 336: return "05_POST_FLOOD"
-    else: return "06_RECOVERY"
+    thresholds = [
+        (-48, "00_MONITORING"), (-24, "01_ELEVATED"), (-6, "02_IMMINENT"),
+        (0, "03_EVACUATION"), (24, "04_ACTIVE"), (336, "05_POST_FLOOD"),
+    ]
+    for limit, phase in thresholds:
+        if h < limit:
+            return phase
+    return "06_RECOVERY"

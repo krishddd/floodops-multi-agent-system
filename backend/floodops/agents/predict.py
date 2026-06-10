@@ -14,23 +14,31 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any
 
 from floodops.agents.base import BaseAgent, _as_dict
+from floodops.config import (
+    LEAD_TIME_SKILL_RETENTION,
+    RETURN_PERIOD_BASE_F1,
+    RETURN_PERIOD_DEPTH_THRESHOLDS_M,
+    RETURN_PERIOD_MEMBER_AGREEMENT,
+    SKILLFUL_F1_THRESHOLD,
+)
 from floodops.llm.prompts import PREDICT_AGENT_SYSTEM_PROMPT
 from floodops.models.causal import CausalGraph
-from floodops.models.enums import AlertLevel, TriggerType
-from floodops.models.reasoning import ReasonedAssessment
-from floodops.models.geo import BBox, GeoJsonFeatureCollection, GeoJsonFeature, GeoJsonGeometry
+from floodops.models.enums import TriggerType
+from floodops.models.geo import BBox, GeoJsonFeatureCollection, GeoJsonGeometry
 from floodops.models.predict import (
     EnsembleDisagreement,
     EnsembleMember,
     FloodDepthGrid,
     FloodForecast,
     FloodTiming,
+    LeadTimeSkill,
     ProbabilisticFloodMap,
+    ReturnPeriodEvent,
 )
-from floodops.models.sentinel import AnomalyAlert
+from floodops.models.reasoning import ReasonedAssessment
 
 
 class FloodPredictAgent(BaseAgent):
@@ -75,7 +83,7 @@ class FloodPredictAgent(BaseAgent):
         if forecast:
             await self.event_bus.emit("flood_forecasts", forecast.model_dump())
 
-    async def run_ensemble(self, alert: dict[str, Any]) -> Optional[FloodForecast]:
+    async def run_ensemble(self, alert: dict[str, Any]) -> FloodForecast | None:
         """Run Monte Carlo ensemble flood model.
 
         Steps:
@@ -92,9 +100,10 @@ class FloodPredictAgent(BaseAgent):
         watershed_id = alert.get("watershed_id", "unknown")
         bbox = self._extract_bbox(alert)
 
-        # Real keyless rainfall (Open-Meteo) biases the ensemble intensity when a
-        # connector is wired; otherwise the deterministic mock is used unchanged.
-        intensity, rain_source = await self._rainfall_intensity(bbox)
+        # Real keyless meteorological forcing (Open-Meteo) biases the ensemble
+        # intensity when a connector is wired; otherwise the deterministic mock is
+        # used unchanged.
+        intensity, rain_source = await self._forcing_intensity(bbox)
 
         ensemble_members = self._generate_mock_ensemble(bbox, 50, intensity=intensity)
         representative_ids = self._select_representatives(ensemble_members, k=10)
@@ -104,6 +113,8 @@ class FloodPredictAgent(BaseAgent):
         timing = self._estimate_timing(ensemble_members)
         depth_grid = self._build_depth_grid(ensemble_members, watershed_id, bbox)
         disagreements = self._compute_disagreements(ensemble_members)
+        rp_events, max_rp = self._classify_return_periods(ensemble_members)
+        lead_skill, skillful_days = self._estimate_lead_time_skill(max_rp)
 
         # Deterministic ensemble probability drives phase routing (safety —
         # the LLM never overrides this number).
@@ -131,7 +142,8 @@ class FloodPredictAgent(BaseAgent):
             value=max_prob,
             confidence=max(0.1, top.agreement_strength if top else 0.5),
             summary=det_summary,
-            causal_factors=([f"rainfall ({rain_source})", "antecedent soil moisture"]
+            causal_factors=([f"meteorological forcing ({rain_source})",
+                             "antecedent soil moisture"]
                             + CausalGraph.from_config().ranked_causal_factors()[:3]),
             competing_hypothesis=competing,
         )
@@ -150,8 +162,14 @@ class FloodPredictAgent(BaseAgent):
             mock=mock_assessment,
         )
 
+        rp_clause = (
+            f" Headline event: ~{max_rp}-yr return period."
+            if max_rp is not None else " Below 1-yr return-period threshold."
+        )
+        if skillful_days is not None:
+            rp_clause += f" Skillful warning horizon: {skillful_days} days."
         summary = (
-            f"{assessment.summary} "
+            f"{assessment.summary}{rp_clause} "
             f"[depth 90% CI {max(0.0, bounds.aleatoric_low):.2f}–"
             f"{bounds.aleatoric_high:.2f}m, "
             f"reasoning confidence {assessment.confidence:.0%}]"
@@ -183,37 +201,65 @@ class FloodPredictAgent(BaseAgent):
             ensemble_members=ensemble_members,
             representative_members=representative_ids,
             zone_disagreements=disagreements,
+            return_period_events=rp_events,
+            max_return_period_years=max_rp,
+            lead_time_skill=lead_skill,
+            skillful_lead_days=skillful_days,
             summary=summary,
         )
         return forecast
 
-    async def run_glof_scenario(self, alert: dict[str, Any]) -> Optional[FloodForecast]:
+    async def run_glof_scenario(self, alert: dict[str, Any]) -> FloodForecast | None:
         """GLOF-specific forecast — skip rainfall ensemble, route breach volume."""
         # TODO: Implement breach volume routing through downstream DEM
         return await self.run_ensemble(alert)
 
     # ── Mock data generation (to be replaced with real models) ──────
 
-    async def _rainfall_intensity(self, bbox: BBox) -> tuple[float, str]:
-        """Derive an ensemble-intensity multiplier from real rainfall.
+    async def _forcing_intensity(self, bbox: BBox) -> tuple[float, str]:
+        """Derive an ensemble-intensity multiplier from paper-faithful forcing.
 
-        Uses the injected connector's Open-Meteo 72h rainfall total. Returns
-        (multiplier, source). Falls back to (1.0, "mock") with no connector or
-        on any error — so behaviour is unchanged without live data.
+        Combines two of the paper's input variables (Nearing et al. 2024) rather
+        than precipitation alone: 72h precipitation **plus** a snowmelt term from
+        positive-degree-hours (2-m temperature), which compounds flood risk in the
+        Himalayan basin. GloFAS discharge is deliberately NOT used as an input.
+
+        Returns (multiplier, source). Falls back to (1.0, "mock") with no connector
+        or on any error, and to the precipitation-only path if the richer
+        meteorology payload is unavailable — so behaviour degrades gracefully.
         """
         if self.connector is None:
             return 1.0, "mock"
         try:
             data = await self.connector.fetch_latest(bbox=bbox)
-            rain = (data or {}).get("rainfall") or {}
+            data = data or {}
+            met = data.get("meteorology") or {}
+
+            if met:
+                precip = float(met.get("precip_total_72h_mm") or 0.0)
+                pdh = float(met.get("positive_degree_hours_72h") or 0.0)
+                snow = float(met.get("snowfall_total_72h_cm") or 0.0)
+                # Precip drives most of it (0–200mm → up to +1.3×). Snowmelt adds a
+                # bounded term ONLY when there is snow in the forcing window — warm
+                # temps alone (e.g. a hot lowland) are not melt. (Limitation: point
+                # forecasts miss upstream glacial/snowpack melt, which needs basin
+                # snow state we can't get keyless — documented in paper-alignment.md.)
+                precip_term = precip / 150.0
+                melt_term = min(0.4, pdh / 400.0) if snow > 0 else 0.0
+                mult = max(0.7, min(2.0, 0.7 + precip_term + melt_term))
+                src = f"openmeteo(precip {precip:.0f}mm/72h"
+                src += f", melt +{melt_term:.2f})" if melt_term > 0 else ")"
+                return round(mult, 2), src
+
+            # Back-compat: precipitation-only payload.
+            rain = data.get("rainfall") or {}
             total = float(rain.get("total_72h_mm") or 0.0)
             if total <= 0:
                 return 1.0, "openmeteo(0mm)"
-            # Map 0–200mm/72h → ~0.7–2.0× intensity (saturating).
             mult = max(0.7, min(2.0, 0.7 + total / 150.0))
             return round(mult, 2), f"openmeteo({total:.0f}mm/72h)"
         except Exception as exc:
-            self._logger.warning("rainfall fetch failed: %s", exc)
+            self._logger.warning("forcing fetch failed: %s", exc)
             return 1.0, "mock"
 
     def _extract_bbox(self, alert: dict[str, Any]) -> BBox:
@@ -342,6 +388,71 @@ class FloodPredictAgent(BaseAgent):
             bbox=bbox,
             cells=GeoJsonFeatureCollection(features=[]),
         )
+
+    def _classify_return_periods(
+        self, members: list[EnsembleMember]
+    ) -> tuple[list[ReturnPeriodEvent], int | None]:
+        """Compute per-return-period exceedance across the ensemble.
+
+        Paper-aligned (Nearing et al., Nature 627, 2024): for each return period
+        threshold, count the fraction of members whose peak depth exceeds it. The
+        headline ``max_rp`` is the largest return period that at least
+        ``RETURN_PERIOD_MEMBER_AGREEMENT`` of members agree on. Fully deterministic
+        — this never touches the LLM, so it is safe to drive downstream routing.
+        """
+        if not members:
+            return [], None
+
+        n = len(members)
+        depths = [m.peak_depth_m for m in members]
+        events: list[ReturnPeriodEvent] = []
+        max_rp: int | None = None
+
+        for rp_years in sorted(RETURN_PERIOD_DEPTH_THRESHOLDS_M):
+            threshold = RETURN_PERIOD_DEPTH_THRESHOLDS_M[rp_years]
+            count = sum(1 for d in depths if d >= threshold)
+            prob = count / n
+            events.append(ReturnPeriodEvent(
+                return_period_years=rp_years,
+                threshold_depth_m=threshold,
+                exceedance_probability=round(prob, 2),
+                member_count=count,
+            ))
+            if prob >= RETURN_PERIOD_MEMBER_AGREEMENT:
+                max_rp = rp_years
+
+        return events, max_rp
+
+    def _estimate_lead_time_skill(
+        self, max_rp: int | None
+    ) -> tuple[list[LeadTimeSkill], int | None]:
+        """Estimate how forecast reliability decays across the 7-day horizon.
+
+        Paper-aligned (Nearing et al., Nature 627, 2024): AI skill is retained to
+        ~5-day lead time, enabling earlier warnings. We scale a reference nowcast
+        F1 (keyed to the headline return period — rarer events score lower) by the
+        configured per-lead-day retention curve, and report the ``skillful_days``
+        warning horizon as the furthest lead time whose estimated F1 clears
+        ``SKILLFUL_F1_THRESHOLD``. Deterministic — never LLM-gated.
+        """
+        # Headline return period drives the base reliability; default to the
+        # 1-yr (most reliable) reference when the ensemble is below threshold.
+        rp_key = max_rp if max_rp in RETURN_PERIOD_BASE_F1 else 1
+        base_f1 = RETURN_PERIOD_BASE_F1[rp_key]
+
+        skill: list[LeadTimeSkill] = []
+        skillful_days: int | None = None
+        for lead_days, retention in enumerate(LEAD_TIME_SKILL_RETENTION):
+            est_f1 = round(base_f1 * retention, 3)
+            skill.append(LeadTimeSkill(
+                lead_time_days=lead_days,
+                estimated_f1=est_f1,
+                skill_retention=retention,
+            ))
+            if est_f1 >= SKILLFUL_F1_THRESHOLD:
+                skillful_days = lead_days
+
+        return skill, skillful_days
 
     def _compute_disagreements(self, members: list[EnsembleMember]) -> list[EnsembleDisagreement]:
         """Compute per-zone ensemble disagreement for badges."""

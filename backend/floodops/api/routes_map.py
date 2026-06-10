@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import random
-from datetime import datetime
 
 from fastapi import APIRouter
 
-from floodops.api.app import get_latest_urban, get_state
+from floodops.api.app import get_latest_urban
 from floodops.models.geo import GeoJsonFeature, GeoJsonFeatureCollection, GeoJsonGeometry
 
 router = APIRouter()
@@ -70,7 +69,7 @@ async def get_flood_depth():
     """30m grid cells with depth for ColumnLayer extrusion."""
     random.seed(99)
     features = []
-    for i in range(80):
+    for _i in range(80):
         lat = 27.68 + random.uniform(-0.05, 0.05)
         lng = 85.32 + random.uniform(-0.05, 0.05)
         depth = max(0.1, random.lognormvariate(0.3, 0.7))

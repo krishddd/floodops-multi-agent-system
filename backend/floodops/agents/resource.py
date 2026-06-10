@@ -12,17 +12,16 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any
 
 from floodops.agents.base import BaseAgent, _as_dict
 from floodops.llm.prompts import RESOURCE_AGENT_SYSTEM_PROMPT
 from floodops.models.enums import TriggerType
-from floodops.models.reasoning import ReasonedAssessment
 from floodops.models.geo import Coordinate, GeoJsonGeometry
+from floodops.models.reasoning import ReasonedAssessment
 from floodops.models.resource import (
     DistributionPlan,
     LogisticsOrder,
-    RescueRoute,
     ResourceOrders,
     StagingLocation,
     SupplyItem,
@@ -90,7 +89,7 @@ class ResourceAgent(BaseAgent):
             )
             await self.event_bus.emit("resource_orders", orders.model_dump())
 
-    async def preposition_supplies(self, forecast_data: dict[str, Any]) -> Optional[ResourceOrders]:
+    async def preposition_supplies(self, forecast_data: dict[str, Any]) -> ResourceOrders | None:
         """Calculate supply needs and generate movement orders."""
         event_id = forecast_data.get("event_id", str(uuid.uuid4()))
 

@@ -10,7 +10,6 @@ them specifically which road is still passable.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -32,7 +31,7 @@ class CellBroadcast(BaseModel):
     language: str = Field("en", description="ISO 639-1 language code")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     reach_estimate: int = Field(0, ge=0, description="Estimated phones in coverage area")
-    evacuation_route_url: Optional[str] = Field(None, description="Link to live evacuation map")
+    evacuation_route_url: str | None = Field(None, description="Link to live evacuation map")
 
 
 class RadioBroadcast(BaseModel):

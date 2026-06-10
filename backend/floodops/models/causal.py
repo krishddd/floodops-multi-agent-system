@@ -25,7 +25,7 @@ class CausalGraph(BaseModel):
     edges: list[CausalEdge] = Field(default_factory=list)
 
     @classmethod
-    def from_config(cls, region: str | None = None) -> "CausalGraph":
+    def from_config(cls, region: str | None = None) -> CausalGraph:
         region = region or DEFAULT_WATERSHED_REGION
         adjacency = WATERSHED_TOPOLOGY.get(region, [])
         return cls(region=region, edges=[

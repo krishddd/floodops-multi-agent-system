@@ -15,11 +15,10 @@ GATE CONDITIONS (checked BEFORE transitions):
 from __future__ import annotations
 
 from floodops.config import (
-    DEESCALATION_GAUGE_HOURS,
     PROB_EVACUATION,
     PROB_IMMINENT,
 )
-from floodops.models.enums import AlertLevel, FloodPhase
+from floodops.models.enums import AlertLevel
 from floodops.models.state import FloodSystemState
 
 

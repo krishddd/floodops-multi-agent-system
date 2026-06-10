@@ -82,9 +82,9 @@ async def simulate_flood_event(background_tasks: BackgroundTasks) -> dict:
     # Fire and forget
     async def _emit_task():
         await bus.emit("anomaly_alerts", alert.model_dump())
-        
+
     background_tasks.add_task(_emit_task)
-    
+
     return {"status": "simulation_triggered", "alert_id": alert.alert_id, "severity": "HIGH", "z_score": 3.8}
 
 

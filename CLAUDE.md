@@ -34,6 +34,54 @@ return their deterministic mock values.
 
 Trigger the full pipeline for a demo: `POST /api/v1/flood/simulate`.
 
+**One-command run (Docker):** `docker compose up` (or `make up`) starts backend
+:8000 + frontend :5173. The lean image runs with no keys; build the semantic-memory
+variant with `docker compose build --build-arg INCLUDE_ML=true backend`.
+
+---
+
+## v2 — Live command deck, observability, real connectors, CI/CD
+
+- **Live WebSocket command deck** (frontend): every agent channel is broadcast as a
+  typed `{type, data, ts}` envelope and surfaced live — a **Compound Threat Radial**
+  (signature canvas), an **Agent Activity Stream**, a **Sitrep ticker**, and a
+  connection HUD with reconnect + full snapshot resync. Works keyless (the basemap
+  needs a Google Maps key; the panels do not).
+- **Observability:** `GET /health` (agents + per-connector live/mock + LLM status),
+  `GET /metrics` (Prometheus via `prometheus_client`), structured JSON logging
+  (`floodops/obs/`). **`# NOTE: dev-only` — `/metrics` counters and the agent-memory
+  store are in-memory and reset on restart; durable persistence is out of scope for v2.**
+- **Keyless real connectors:** `OpenMeteoConnector` (GloFAS discharge ensemble +
+  rainfall, TTL 900s) feeds predict/sentinel; `OSMConnector` (Overpass, TTL 86400s)
+  feeds urban. Both fall back to mock when unreachable. Heavy GDAL connectors live
+  behind the same interface (`requirements-geo.txt`); a key activates them later.
+- **Advanced agent techniques:** bounded FIFO **agent memory** (`MEMORY_MAX_EVENTS`,
+  default 500) with cosine recall — embeddings via sentence-transformers when present,
+  else recall is **disabled (never faked)**; a config-seeded **causal graph**
+  (`WATERSHED_TOPOLOGY`, default **`bagmati`** — change `DEFAULT_WATERSHED_REGION` for
+  another basin); multi-scale district rollup in urban.
+- **CI/CD:** GitHub Actions (`ci.yml`: ruff + advisory mypy + pytest-cov, eslint +
+  vitest + build, **blocking security gate** — bandit HIGH + `npm audit --omit=dev
+  --audit-level=high`; `docker.yml`: matrix lean+ML backend + frontend). `make
+  test lint security`, ruff/mypy/eslint/prettier/pre-commit configs, vitest panel tests.
+
+**v2 scope notes / tradeoffs (for v3):**
+- **Persistence is out of scope** — agent memory + metrics reset on restart.
+- **Optional semantic memory:** install `sentence-transformers` (in `requirements-ml.txt`,
+  or Docker `--build-arg INCLUDE_ML=true` which pre-downloads `all-MiniLM-L6-v2`) for
+  keyless semantic recall; without it `recall_similar()` returns `[]`.
+- **`LLM_ENSEMBLE_CONCURRENCY`** (default 1) caps concurrent LLM calls for tier-1 RPM
+  safety; in no-key/dev mode raise it freely (NullProvider makes no network calls).
+- **Memory uses FIFO eviction** — it can evict the exact high-value old analogue (e.g.
+  a 2021 monsoon) first; v3 may move to LRU/relevance-scored.
+- **Phase transitions (v3, FIXED):** `orchestrator/service.py` now advances phases via
+  a deterministic **one-shot single-step** transition (`_step_graph` evaluates one
+  routing decision per event using the graph's own routing/node functions) instead of
+  re-invoking the LangGraph from its fixed `monitoring` entry point (which reset the
+  phase and hit `GraphRecursionError`). It also subscribes to `anomaly_alerts` and
+  `flood_receding` — without these the MONITORING→ELEVATED and ACTIVE→POST_FLOOD
+  transitions could never fire. Covered by `tests/test_orchestrator.py`.
+
 ---
 
 ## The 8 Agents

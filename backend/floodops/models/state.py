@@ -14,18 +14,18 @@ from __future__ import annotations
 
 import operator
 from datetime import datetime
-from typing import Annotated, Optional, TypedDict
+from typing import Annotated, TypedDict
 
-from floodops.models.enums import FloodPhase
-from floodops.models.sentinel import AnomalyAlert, FloodRecedingEvent
-from floodops.models.glof import LakeHealthReport, GLOFEmergency
-from floodops.models.predict import FloodForecast
-from floodops.models.urban import UrbanRiskReport
 from floodops.models.alert import AlertDispatch
-from floodops.models.resource import ResourceOrders
-from floodops.models.disease import DiseaseRiskReport
 from floodops.models.compound import CompoundThreat
+from floodops.models.disease import DiseaseRiskReport
+from floodops.models.enums import FloodPhase
+from floodops.models.glof import GLOFEmergency, LakeHealthReport
 from floodops.models.orchestrator import AuditEntry, StateTransitionEvent
+from floodops.models.predict import FloodForecast
+from floodops.models.resource import ResourceOrders
+from floodops.models.sentinel import AnomalyAlert, FloodRecedingEvent
+from floodops.models.urban import UrbanRiskReport
 
 
 class FloodSystemState(TypedDict, total=False):
@@ -53,8 +53,8 @@ class FloodSystemState(TypedDict, total=False):
 
     # ── Phase tracking ──────────────────────────────────────────────
     current_phase: FloodPhase
-    previous_phase: Optional[FloodPhase]
-    phase_entered_at: Optional[str]  # ISO datetime string
+    previous_phase: FloodPhase | None
+    phase_entered_at: str | None  # ISO datetime string
     event_id: str  # UUID generated on MONITORING → ELEVATED
 
     # ── Agent outputs (accumulated via reducers) ────────────────────
@@ -83,7 +83,7 @@ class FloodSystemState(TypedDict, total=False):
 
     # ── Timeline state (for scrubber) ───────────────────────────────
     # Stores snapshots keyed by ISO timestamp for frontend playback
-    timeline_cursor: Optional[str]  # Current time position in timeline
+    timeline_cursor: str | None  # Current time position in timeline
 
 
 def create_initial_state(event_id: str = "system-init") -> FloodSystemState:

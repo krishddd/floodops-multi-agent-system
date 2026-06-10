@@ -18,7 +18,7 @@ from __future__ import annotations
 import math
 import uuid
 from collections import deque
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from floodops.config import MEMORY_MAX_EVENTS
 from floodops.models.memory import MemoryRecord, RecalledEvent
@@ -39,14 +39,14 @@ class AgentMemory:
     def __init__(
         self,
         max_events: int = MEMORY_MAX_EVENTS,
-        embed_fn: Optional[Callable[[str], list[float]]] = None,
+        embed_fn: Callable[[str], list[float]] | None = None,
     ) -> None:
         self._store: deque[MemoryRecord] = deque(maxlen=max_events)
         self._embed_fn = embed_fn
         self._model = None
         self._model_tried = False
 
-    def _embed(self, text: str) -> Optional[list[float]]:
+    def _embed(self, text: str) -> list[float] | None:
         if self._embed_fn is not None:  # (a) injected embedder
             try:
                 return list(self._embed_fn(text))
@@ -69,7 +69,7 @@ class AgentMemory:
             self._model = _load_sentence_transformer()
         return self._model is not None
 
-    def remember(self, agent_id: str, summary: str, metadata: Optional[dict] = None) -> None:
+    def remember(self, agent_id: str, summary: str, metadata: dict | None = None) -> None:
         vec = self._embed(summary)
         if vec is None:
             return  # recall disabled — don't store unembeddable records
@@ -96,7 +96,7 @@ class AgentMemory:
     def _cosine(a: list[float], b: list[float]) -> float:
         if not a or not b or len(a) != len(b):
             return 0.0
-        dot = sum(x * y for x, y in zip(a, b))
+        dot = sum(x * y for x, y in zip(a, b, strict=False))
         na = math.sqrt(sum(x * x for x in a))
         nb = math.sqrt(sum(y * y for y in b))
         return dot / (na * nb) if na and nb else 0.0

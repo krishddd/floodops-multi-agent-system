@@ -1,8 +1,10 @@
 """Auth routes — Google OAuth login/callback/logout."""
 from __future__ import annotations
+
 from fastapi import APIRouter
 from fastapi.responses import RedirectResponse
-from floodops.auth.oauth import get_authorization_url, exchange_code, get_session, clear_session
+
+from floodops.auth.oauth import clear_session, exchange_code, get_authorization_url, get_session
 
 router = APIRouter()
 

@@ -36,3 +36,34 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["tests/__pycache__"]
+
+[tool.ruff.lint]
+# Conservative rule set: pyflakes (F), pycodestyle (E/W), isort (I), bugbear (B),
+# pyupgrade (UP). Keep noise low so the gate is meaningful, not annoying.
+select = ["F", "E", "W", "I", "B", "UP"]
+ignore = [
+    "E501",   # line length handled by formatter, not enforced hard
+    "B008",   # FastAPI dependency-injection defaults use callables in args
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["B011"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true   # optional/untyped deps (langgraph, google, etc.)
+warn_unused_ignores = false
+check_untyped_defs = false
+# Optional heavy ML deps are absent in the lean env — never fail lint on them.
+[[tool.mypy.overrides]]
+module = ["sentence_transformers.*", "torch.*"]
+ignore_missing_imports = true
+
+[tool.bandit]
+# Security gate scans the package; tests are excluded.
+exclude_dirs = ["tests"]

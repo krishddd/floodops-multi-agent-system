@@ -9,7 +9,7 @@ Data cadence: 🔵 On-demand (static infrastructure data, queried as needed)
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from floodops.connectors.base import BaseConnector
 from floodops.models.enums import DataSource
@@ -46,7 +46,7 @@ class OSMConnector(BaseConnector):
         except Exception:
             return False
 
-    async def fetch_latest(self, bbox: Optional[BBox] = None, **kwargs: Any) -> dict:
+    async def fetch_latest(self, bbox: BBox | None = None, **kwargs: Any) -> dict:
         """Fetch road and building data for a bounding box."""
         if bbox is None:
             bbox = BBox(south=27.65, west=85.25, north=27.75, east=85.35)

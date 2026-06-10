@@ -1,10 +1,11 @@
 """Ensemble data endpoints — members, fan, disagreement, representatives."""
 from __future__ import annotations
+
 import random
-from datetime import datetime, timedelta
+
 from fastapi import APIRouter
+
 from floodops.api.app import get_latest_forecast
-from floodops.models.geo import GeoJsonGeometry
 
 router = APIRouter()
 

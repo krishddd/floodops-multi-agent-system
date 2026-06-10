@@ -9,7 +9,7 @@ logged with full provenance in the audit trail.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -35,8 +35,8 @@ class AuditEntry(BaseModel):
                     "and ensemble data. Not generic — cites specific numbers."
     )
     confidence: float = Field(..., ge=0.0, le=1.0, description="Agent's confidence in this action")
-    input_summary: Optional[str] = Field(None, description="What data triggered this action")
-    output_summary: Optional[str] = Field(None, description="What was produced")
+    input_summary: str | None = Field(None, description="What data triggered this action")
+    output_summary: str | None = Field(None, description="What was produced")
     data_sources: list[str] = Field(
         default_factory=list,
         description="Which data sources contributed, with cadence badges"
@@ -62,7 +62,7 @@ class StateTransitionEvent(BaseModel):
         description="LLM-generated explanation of WHY this transition happened, "
                     "citing specific thresholds and data values"
     )
-    deescalation_conditions: Optional[str] = Field(
+    deescalation_conditions: str | None = Field(
         None,
         description="What would need to happen for the system to step back down"
     )
@@ -83,7 +83,7 @@ class CoordinationOrder(BaseModel):
     target_agent: str
     action: str
     parameters: dict[str, Any] = Field(default_factory=dict)
-    deadline: Optional[datetime] = None
+    deadline: datetime | None = None
     priority: int = Field(1, ge=1, le=5)
     issued_at: datetime = Field(default_factory=datetime.utcnow)
 
@@ -110,10 +110,10 @@ class WhyCardData(BaseModel):
     confidence_explanation: str = Field("", description="Why this confidence level")
 
     # Ensemble disagreement (if applicable)
-    majority_view: Optional[str] = Field(None, description="What most ensemble members predict")
-    majority_pct: Optional[float] = Field(None, ge=0, le=1)
-    minority_view: Optional[str] = Field(None, description="What dissenting members predict")
-    minority_pct: Optional[float] = Field(None, ge=0, le=1)
+    majority_view: str | None = Field(None, description="What most ensemble members predict")
+    majority_pct: float | None = Field(None, ge=0, le=1)
+    minority_view: str | None = Field(None, description="What dissenting members predict")
+    minority_pct: float | None = Field(None, ge=0, le=1)
 
     # Data provenance
     data_sources: list[DataSourceBadge] = Field(default_factory=list)

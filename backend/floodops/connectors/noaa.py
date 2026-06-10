@@ -10,7 +10,7 @@ Data cadence: 🟢 15 minutes (alerts refreshed per polling cycle)
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from floodops.connectors.base import BaseConnector
 from floodops.models.enums import DataSource
@@ -28,16 +28,16 @@ class NOAAConnector(BaseConnector):
 
     async def health_check(self) -> bool:
         try:
-            data = await self.fetch_with_retry(f"{self.NWS_BASE}/status")
+            await self.fetch_with_retry(f"{self.NWS_BASE}/status")
             return True
         except Exception:
             return False
 
-    async def fetch_latest(self, bbox: Optional[BBox] = None, **kwargs: Any) -> dict:
+    async def fetch_latest(self, bbox: BBox | None = None, **kwargs: Any) -> dict:
         """Fetch active weather alerts from NWS for the given area."""
         return await self.get_active_alerts(bbox)
 
-    async def get_active_alerts(self, bbox: Optional[BBox] = None) -> dict:
+    async def get_active_alerts(self, bbox: BBox | None = None) -> dict:
         """Fetch active NWS alerts.
 
         NWS API returns GeoJSON natively — no conversion needed.
@@ -72,7 +72,7 @@ class NOAAConnector(BaseConnector):
         # Step 2: Get forecast
         return await self.fetch_with_retry(forecast_url, headers=headers)
 
-    async def get_radar_stations(self, bbox: Optional[BBox] = None) -> dict:
+    async def get_radar_stations(self, bbox: BBox | None = None) -> dict:
         """Fetch radar station metadata."""
         headers = {"User-Agent": "FloodOps/1.0 (floodops@example.com)"}
         return await self.fetch_with_retry(f"{self.NWS_BASE}/radar/stations", headers=headers)

@@ -9,7 +9,6 @@ re-runs FloodPredictAgent with modified parameters to show the diff.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -23,15 +22,15 @@ class ScenarioParams(BaseModel):
     None = use current real value (no override).
     """
 
-    rainfall_mm_24h: Optional[float] = Field(None, ge=0, description="Override 24h rainfall total")
-    rainfall_shift_km: Optional[float] = Field(None, description="Shift rainfall center east(+)/west(-)")
-    soil_saturation_pct: Optional[float] = Field(None, ge=0, le=100, description="Override soil saturation %")
-    dam_break_time_h: Optional[float] = Field(None, ge=0, description="Hours from now until GLOF breach")
-    dam_break_lake_id: Optional[str] = Field(None, description="Which lake to breach in scenario")
-    ensemble_member_filter: Optional[list[int]] = Field(None, description="Only use these ensemble members")
+    rainfall_mm_24h: float | None = Field(None, ge=0, description="Override 24h rainfall total")
+    rainfall_shift_km: float | None = Field(None, description="Shift rainfall center east(+)/west(-)")
+    soil_saturation_pct: float | None = Field(None, ge=0, le=100, description="Override soil saturation %")
+    dam_break_time_h: float | None = Field(None, ge=0, description="Hours from now until GLOF breach")
+    dam_break_lake_id: str | None = Field(None, description="Which lake to breach in scenario")
+    ensemble_member_filter: list[int] | None = Field(None, description="Only use these ensemble members")
 
     # Presets
-    preset: Optional[str] = Field(
+    preset: str | None = Field(
         None,
         description="Named preset: 'worst_case', 'best_case', 'glof_breach', 'climate_plus_2c'"
     )

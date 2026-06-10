@@ -1,8 +1,11 @@
 """⚪ MOCK — GLIMS glacial lake inventory. Returns static lake data."""
 from __future__ import annotations
-from typing import Any, Optional
+
+from typing import Any
+
 from floodops.connectors.base import BaseConnector
 from floodops.models.enums import DataSource
+
 
 class GLIMSConnector(BaseConnector):
     source = DataSource.GLIMS

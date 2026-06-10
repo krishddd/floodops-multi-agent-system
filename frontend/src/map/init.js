@@ -1,19 +1,22 @@
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
-import { Loader } from '@googlemaps/js-api-loader';
+import { importLibrary, setOptions } from '@googlemaps/js-api-loader';
 
 let _map = null;
 let _overlay = null;
 
 export async function initMap(container, config) {
-    const loader = new Loader({
-        apiKey: config.mapsApiKey,
-        version: "weekly",
-        libraries: ["geometry", "visualization"]
-    });
+    // js-api-loader v2 functional API — the old `new Loader().load()` class was
+    // removed in v2 and throws if used (silent blank map). Configure once, then
+    // import only the libraries we use.
+    setOptions({ key: config.mapsApiKey, v: 'weekly' });
 
-    await loader.load();
+    const [{ Map }] = await Promise.all([
+        importLibrary('maps'),
+        importLibrary('geometry'),
+        importLibrary('visualization'),
+    ]);
 
-    _map = new google.maps.Map(container, {
+    _map = new Map(container, {
         center: config.center,
         zoom: config.zoom || 12,
         tilt: 45,

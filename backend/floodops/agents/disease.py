@@ -14,19 +14,19 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any
 
 from floodops.agents.base import BaseAgent, _as_dict
 from floodops.llm.prompts import DISEASE_AGENT_SYSTEM_PROMPT
-from floodops.models.enums import Pathogen, TriggerType
-from floodops.models.reasoning import ReasonedAssessment
-from floodops.models.geo import BBox, GeoJsonFeatureCollection
 from floodops.models.disease import (
     DiseaseRiskMap,
     DiseaseRiskReport,
     Hotspot,
     MedicalSupplyOrder,
 )
+from floodops.models.enums import Pathogen, TriggerType
+from floodops.models.geo import BBox, GeoJsonFeatureCollection
+from floodops.models.reasoning import ReasonedAssessment
 
 
 class DiseaseRiskAgent(BaseAgent):
@@ -90,7 +90,7 @@ class DiseaseRiskAgent(BaseAgent):
             mock=mock,
         )
 
-    async def forecast_disease_risk(self, event_data: dict[str, Any]) -> Optional[DiseaseRiskReport]:
+    async def forecast_disease_risk(self, event_data: dict[str, Any]) -> DiseaseRiskReport | None:
         """Predict cholera, typhoid, and leptospirosis risk.
 
         Risk models (to be replaced with real epidemiological models):

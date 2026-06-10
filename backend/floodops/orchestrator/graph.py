@@ -15,7 +15,7 @@ The graph handles:
 
 from __future__ import annotations
 
-from langgraph.graph import END, StateGraph
+from langgraph.graph import StateGraph
 
 from floodops.models.state import FloodSystemState
 from floodops.orchestrator.nodes import (
@@ -42,7 +42,7 @@ def build_flood_graph() -> StateGraph:
     """Build the 7-phase LangGraph state machine.
 
     Architecture:
-    
+
         ┌──────────┐    alert >= MEDIUM    ┌──────────┐
         │MONITORING├──────────────────────►│ ELEVATED │
         │  (00)    │◄──────────────────────┤  (01)    │

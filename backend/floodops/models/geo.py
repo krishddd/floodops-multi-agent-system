@@ -7,7 +7,7 @@ uses these base types for coordinates, bounding boxes, and GeoJSON.
 
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -64,7 +64,7 @@ class GeoJsonFeature(BaseModel):
     type: Literal["Feature"] = "Feature"
     geometry: GeoJsonGeometry
     properties: dict[str, Any] = Field(default_factory=dict)
-    id: Optional[str] = None
+    id: str | None = None
 
 
 class GeoJsonFeatureCollection(BaseModel):
@@ -86,6 +86,6 @@ class DataCadenceBadge(BaseModel):
 
     source: str = Field(..., description="DataSource enum value")
     expected_cadence: str = Field(..., description="Human-readable cadence, e.g. '15 min'")
-    last_updated_iso: Optional[str] = Field(None, description="ISO timestamp of last data")
+    last_updated_iso: str | None = Field(None, description="ISO timestamp of last data")
     freshness: Literal["fresh", "within_cadence", "stale", "static", "on_demand"] = "static"
     emoji: str = Field("⚪", description="Visual indicator: 🟢 🟡 🔴 ⚪ 🔵")

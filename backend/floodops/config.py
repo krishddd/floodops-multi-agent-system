@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 # ---------------------------------------------------------------------------
@@ -41,6 +42,10 @@ GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 # Effort for adaptive-thinking Anthropic calls: low | medium | high | xhigh | max
 ANTHROPIC_EFFORT: str = os.getenv("ANTHROPIC_EFFORT", "medium")
 
+# Max attempts for a single LLM call on transient (503/429/overloaded) errors —
+# free Gemini tiers 503 under load, so a couple of backoff retries smooths it out.
+LLM_MAX_RETRIES: int = int(os.getenv("LLM_MAX_RETRIES", "3"))
+
 # Core-3 technique tuning (used by BaseAgent reasoning helpers).
 LLM_ENSEMBLE_RUNS: int = int(os.getenv("LLM_ENSEMBLE_RUNS", "3"))
 LLM_REFLEXION_MAX_RETRIES: int = int(os.getenv("LLM_REFLEXION_MAX_RETRIES", "3"))
@@ -63,6 +68,49 @@ MEMORY_MAX_EVENTS: int = int(os.getenv("MEMORY_MAX_EVENTS", "500"))
 
 # CompoundEventAgent correlation window (v2).
 COMPOUND_WINDOW_HOURS: float = float(os.getenv("COMPOUND_WINDOW_HOURS", "6"))
+
+# Return-period event thresholds (v3, paper-aligned). Nearing et al., Nature 627
+# (2024) frame flood skill by return period (1/2/5/10-yr) rather than raw depth.
+# These map a return-period to the peak-depth (m) that defines that event in the
+# demo basin. NOTE: dev-only coarse values — the paper derives per-gauge thresholds
+# from a Bulletin 17B flood-frequency fit on the observed record; swap these for
+# basin-specific values when real GRDC/discharge data is wired.
+RETURN_PERIOD_DEPTH_THRESHOLDS_M: dict[int, float] = {
+    1: 0.5,
+    2: 1.0,
+    5: 2.0,
+    10: 3.0,
+}
+# Fraction of ensemble members that must exceed a return-period threshold for it
+# to be reported as the forecast's headline return-period event (deterministic,
+# never LLM-gated — mirrors the paper's member-agreement framing).
+RETURN_PERIOD_MEMBER_AGREEMENT: float = float(
+    os.getenv("RETURN_PERIOD_MEMBER_AGREEMENT", "0.5")
+)
+
+# Lead-time forecast skill (v3, paper-aligned). The headline result of Nearing
+# et al. (2024) is that AI forecasts retain skill out to ~5-day lead time —
+# matching GloFAS *nowcasts* (0-day) — which lets warnings go out earlier.
+#
+# These encode that finding as a deterministic reference curve so each forecast
+# can report an "effective warning horizon". They are ILLUSTRATIVE reference
+# values distilled from the paper (F1 by return period falls in ~0.15–0.55;
+# skill is retained to day 5 then degrades), NOT a live skill measurement — a
+# real deployment would read empirical per-gauge F1 from a hindcast archive.
+
+# Reference nowcast (0-day) F1 by return period. Rarer events score lower
+# (paper Fig 2/4): more impactful but harder to predict.
+RETURN_PERIOD_BASE_F1: dict[int, float] = {
+    1: 0.55,
+    2: 0.45,
+    5: 0.35,
+    10: 0.28,
+}
+# Fraction of nowcast F1 retained at lead days 0..7. AI ~day-5 ≈ GloFAS day-0,
+# so skill holds through day 5 then drops (paper Fig 3).
+LEAD_TIME_SKILL_RETENTION: list[float] = [1.0, 0.99, 0.97, 0.94, 0.90, 0.85, 0.72, 0.58]
+# Minimum estimated F1 for a lead day to count toward the warning horizon.
+SKILLFUL_F1_THRESHOLD: float = float(os.getenv("SKILLFUL_F1_THRESHOLD", "0.2"))
 
 # Watershed flow topology for causal-graph reasoning (v2). Config-driven adjacency
 # (upstream -> downstream), keyed by region id, configurable per-region. This is

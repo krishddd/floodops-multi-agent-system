@@ -21,7 +21,7 @@ import statistics
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Optional, TypeVar
+from typing import Any, TypeVar
 
 from floodops.config import (
     LLM_CONFIDENCE_FLOOR,
@@ -32,7 +32,7 @@ from floodops.config import (
 )
 from floodops.models.enums import FloodPhase, TriggerType
 from floodops.models.orchestrator import AuditEntry
-from floodops.models.reasoning import ReasonedAssessment, UncertaintyBounds
+from floodops.models.reasoning import UncertaintyBounds
 from floodops.queue.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
@@ -41,10 +41,10 @@ logger = logging.getLogger(__name__)
 # Created in the FastAPI lifespan (see api/app.py) via set_llm_semaphore() so it
 # binds to the running event loop and reads config at startup, not import time.
 # When None (unit tests / no lifespan), reasoning runs unbounded.
-_LLM_SEMAPHORE: Optional["asyncio.Semaphore"] = None
+_LLM_SEMAPHORE: asyncio.Semaphore | None = None
 
 
-def set_llm_semaphore(sem: Optional["asyncio.Semaphore"]) -> None:
+def set_llm_semaphore(sem: asyncio.Semaphore | None) -> None:
     """Install the shared LLM concurrency semaphore (called from the lifespan)."""
     global _LLM_SEMAPHORE
     _LLM_SEMAPHORE = sem
@@ -121,7 +121,7 @@ class BaseAgent(ABC):
     def __init__(
         self,
         event_bus: EventBus,
-        llm: Optional["FloodLLMClient"] = None,
+        llm: FloodLLMClient | None = None,
         connector: Any = None,
     ) -> None:
         self.event_bus = event_bus
@@ -199,7 +199,7 @@ class BaseAgent(ABC):
         self,
         system: str,
         data: Any,
-        context: Optional[dict[str, Any]],
+        context: dict[str, Any] | None,
         schema: type[_T],
         mock: _T,
         *,
@@ -248,7 +248,7 @@ class BaseAgent(ABC):
         self,
         system: str,
         data: Any,
-        context: Optional[dict[str, Any]],
+        context: dict[str, Any] | None,
         schema: type[_T],
         mock: _T,
         *,
@@ -287,7 +287,7 @@ class BaseAgent(ABC):
 
     # ── Agent memory (historical-event recall) ───────────────────────
 
-    def remember(self, summary: str, metadata: Optional[dict[str, Any]] = None) -> None:
+    def remember(self, summary: str, metadata: dict[str, Any] | None = None) -> None:
         """Store an event summary in the shared memory (no-op if disabled)."""
         if _AGENT_MEMORY is not None:
             _AGENT_MEMORY.remember(self.agent_id, summary, metadata)
@@ -302,7 +302,7 @@ class BaseAgent(ABC):
         self,
         samples: list[float],
         *,
-        ensemble_spread: Optional[list[float]] = None,
+        ensemble_spread: list[float] | None = None,
     ) -> UncertaintyBounds:
         """Epistemic (model spread) + aleatoric (data variance) bounds.
 
@@ -341,10 +341,10 @@ class BaseAgent(ABC):
         confidence: float,
         phase: FloodPhase = FloodPhase.MONITORING,
         *,
-        input_summary: Optional[str] = None,
-        output_summary: Optional[str] = None,
-        data_sources: Optional[list[str]] = None,
-        metadata: Optional[dict[str, Any]] = None,
+        input_summary: str | None = None,
+        output_summary: str | None = None,
+        data_sources: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> AuditEntry:
         """Create a structured audit entry.
 

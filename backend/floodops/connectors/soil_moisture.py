@@ -1,10 +1,13 @@
 """⚪ MOCK — Soil Moisture connector. Returns synthetic 0.25° grids."""
 from __future__ import annotations
-from typing import Any, Optional
+
+import random
+from typing import Any
+
 from floodops.connectors.base import BaseConnector
 from floodops.models.enums import DataSource
 from floodops.models.geo import BBox
-import random
+
 
 class SoilMoistureConnector(BaseConnector):
     source = DataSource.SOIL_MOISTURE
@@ -14,7 +17,7 @@ class SoilMoistureConnector(BaseConnector):
     async def health_check(self) -> bool:
         return True
 
-    async def fetch_latest(self, bbox: Optional[BBox] = None, **kwargs: Any) -> dict:
+    async def fetch_latest(self, bbox: BBox | None = None, **kwargs: Any) -> dict:
         random.seed(789)
         bbox = bbox or BBox(south=27.5, west=85.0, north=28.0, east=86.0)
         cells = []

@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend (lint · types · tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (lean) deps + tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff mypy pytest pytest-asyncio pytest-cov
+      - name: Ruff (blocking)
+        run: ruff check floodops
+      - name: Mypy (advisory)
+        run: mypy floodops
+        continue-on-error: true
+      - name: Pytest + coverage (blocking)
+        run: pytest --cov=floodops --cov-report=term-missing -q
+
+  security:
+    name: Security gate (bandit · npm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Bandit — fail on HIGH/CRITICAL
+        run: |
+          pip install bandit
+          # -lll surfaces only HIGH-severity; non-zero exit fails the build.
+          bandit -r backend/floodops -lll
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: npm audit — fail on high+ (production deps)
+        working-directory: frontend
+        run: |
+          npm install --no-audit --no-fund
+          # Block on shipped/production vulnerabilities; the dev toolchain
+          # (vite/esbuild/vitest dev-server CVEs) never reaches production.
+          npm audit --omit=dev --audit-level=high
+
+  frontend:
+    name: Frontend (lint · tests · build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci || npm install
+      - name: ESLint (blocking)
+        run: npm run lint
+      - name: Vitest (blocking)
+        run: npm test
+      - name: Vite build (blocking)
+        run: npm run build

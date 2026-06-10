@@ -9,12 +9,11 @@ Every downstream agent subscribes to these alerts; they never touch raw APIs.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
 from floodops.models.enums import AlertLevel, DataSource
-from floodops.models.geo import Coordinate, BBox
+from floodops.models.geo import BBox, Coordinate
 
 
 class SensorReading(BaseModel):
@@ -34,7 +33,7 @@ class SensorReading(BaseModel):
     location: Coordinate
     watershed_id: str = Field(..., description="HydroBASINS watershed ID this sensor belongs to")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    quality_flag: Optional[str] = Field(None, description="Data quality indicator from source")
+    quality_flag: str | None = Field(None, description="Data quality indicator from source")
 
 
 class Baseline(BaseModel):
@@ -77,7 +76,7 @@ class AnomalyAlert(BaseModel):
     total_sensors: int = Field(..., ge=1, description="Total sensors in watershed for this metric")
     source_readings: list[SensorReading] = Field(default_factory=list, description="The raw readings that contributed")
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    description: Optional[str] = Field(None, description="LLM-generated interpretation of this anomaly")
+    description: str | None = Field(None, description="LLM-generated interpretation of this anomaly")
 
 
 class FloodRecedingEvent(BaseModel):

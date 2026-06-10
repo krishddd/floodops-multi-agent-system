@@ -7,10 +7,10 @@ phase transition, and every data model references these types.
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 
-class FloodPhase(str, Enum):
+class FloodPhase(StrEnum):
     """The 7 lifecycle phases of a flood event.
 
     The orchestrator's LangGraph state machine transitions through these
@@ -26,7 +26,7 @@ class FloodPhase(str, Enum):
     RECOVERY = "06_RECOVERY"       # T+14d onwards — rebuild and learn
 
 
-class AlertLevel(str, Enum):
+class AlertLevel(StrEnum):
     """Anomaly severity levels from SentinelAgent.
 
     Based on z-score deviation from rolling baseline.
@@ -39,7 +39,7 @@ class AlertLevel(str, Enum):
     CRITICAL = "CRITICAL" # > 5σ deviation OR confirmed GLOF signals
 
 
-class SeverityLevel(str, Enum):
+class SeverityLevel(StrEnum):
     """Alert dissemination severity from AlertAgent.
 
     Maps flood probability to communication channel escalation.
@@ -51,7 +51,7 @@ class SeverityLevel(str, Enum):
     EMERGENCY = "EMERGENCY"  # > 90% probability OR GLOF breach — all channels
 
 
-class TriggerType(str, Enum):
+class TriggerType(StrEnum):
     """How an agent is activated.
 
     Each agent declares one or more trigger types:
@@ -65,7 +65,7 @@ class TriggerType(str, Enum):
     HTTP_DIRECT = "HTTP_DIRECT"
 
 
-class Pathogen(str, Enum):
+class Pathogen(StrEnum):
     """Post-flood waterborne pathogens tracked by DiseaseRiskAgent.
 
     Each has a distinct incubation period and risk model:
@@ -79,7 +79,7 @@ class Pathogen(str, Enum):
     LEPTOSPIROSIS = "leptospirosis"
 
 
-class DataSource(str, Enum):
+class DataSource(StrEnum):
     """External data sources with their true update cadences.
 
     Used by data-cadence badges to honestly display freshness.
@@ -99,7 +99,7 @@ class DataSource(str, Enum):
     DARTMOUTH = "DARTMOUTH"               # ⚪ event-based archive
 
 
-class ConnectorStatus(str, Enum):
+class ConnectorStatus(StrEnum):
     """Connector health status."""
 
     LIVE = "LIVE"       # 🟢 Real API, actively fetching

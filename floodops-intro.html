@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>FloodOps — How the Agents Work · Bagmati Basin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --bg-deep:hsl(220,50%,6%); --glass:hsla(220,40%,15%,.72);
+    --glass-brd:hsla(210,60%,70%,.14); --txt:#e8eef7; --dim:#8fa3bd;
+    --blue:hsl(210,100%,56%); --cyan:hsl(188,90%,55%);
+    --green:hsl(142,70%,45%); --amber:hsl(38,92%,55%); --red:hsl(0,80%,55%);
+    --mono:'JetBrains Mono',monospace; --sans:'Inter',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--sans);background:
+      radial-gradient(1200px 700px at 70% -10%,hsla(210,80%,20%,.5),transparent 60%),
+      radial-gradient(900px 600px at 10% 110%,hsla(190,80%,18%,.4),transparent 60%),
+      var(--bg-deep);color:var(--txt);min-height:100vh;overflow-x:hidden}
+  .wrap{max-width:1280px;margin:0 auto;padding:28px 22px 60px}
+  header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:6px}
+  .logo{width:38px;height:38px}
+  h1{font-size:24px;font-weight:700;letter-spacing:-.3px}
+  h1 span{color:var(--cyan)}
+  .sub{color:var(--dim);font-size:13px;margin:2px 0 18px}
+  .loc-chip{margin-left:auto;display:flex;gap:14px;flex-wrap:wrap}
+  .chip{background:var(--glass);border:1px solid var(--glass-brd);border-radius:10px;
+    padding:7px 12px;font-family:var(--mono);font-size:12px;backdrop-filter:blur(20px)}
+  .chip b{color:var(--cyan)}
+  .glass{background:var(--glass);border:1px solid var(--glass-brd);border-radius:16px;
+    backdrop-filter:blur(20px) saturate(1.2);box-shadow:0 8px 30px rgba(0,0,0,.35)}
+  .grid{display:grid;grid-template-columns:1.05fr 1.25fr .95fr;gap:16px;margin-top:8px}
+  @media(max-width:980px){.grid{grid-template-columns:1fr}}
+  .panel{padding:16px}
+  .panel h3{font-size:12px;text-transform:uppercase;letter-spacing:1.2px;color:var(--dim);
+    margin-bottom:12px;display:flex;align-items:center;gap:8px}
+  .pip{width:8px;height:8px;border-radius:50%;background:var(--green);
+    box-shadow:0 0 10px var(--green);animation:blink 1.6s infinite}
+  @keyframes blink{50%{opacity:.35}}
+  /* basin map */
+  svg{width:100%;height:auto;display:block}
+  .node circle{transition:all .4s}
+  .node text{font-family:var(--mono);font-size:8.5px;fill:var(--dim)}
+  .flow{stroke:hsla(210,60%,60%,.35);stroke-width:2;fill:none}
+  .wave{stroke:var(--cyan);stroke-width:3.5;fill:none;stroke-linecap:round;
+    stroke-dasharray:8 320;filter:drop-shadow(0 0 6px var(--cyan))}
+  /* agent pipeline */
+  .agents{display:flex;flex-direction:column;gap:9px}
+  .agent{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:11px;
+    border:1px solid transparent;background:hsla(220,40%,20%,.4);transition:.35s;opacity:.55}
+  .agent.on{opacity:1;border-color:var(--ac);background:hsla(220,45%,22%,.85);
+    box-shadow:0 0 0 1px var(--ac),0 0 22px -6px var(--ac);transform:translateX(2px)}
+  .a-dot{width:11px;height:11px;border-radius:50%;background:var(--ac);flex:0 0 auto;
+    box-shadow:0 0 10px var(--ac)}
+  .a-name{font-weight:600;font-size:13px;flex:0 0 132px}
+  .a-role{color:var(--dim);font-size:11.5px;flex:1}
+  .a-out{font-family:var(--mono);font-size:12px;color:var(--cyan);min-width:62px;
+    text-align:right;opacity:0;transition:.3s}
+  .agent.on .a-out{opacity:1}
+  /* radial + stream */
+  canvas{display:block;margin:0 auto}
+  .meta-score{font-size:30px;font-weight:700}
+  .hz{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin:8px 0}
+  .hz span{font-family:var(--mono);font-size:10.5px;border:1px solid;border-radius:20px;
+    padding:3px 9px}
+  .action{font-size:11.5px;color:var(--amber);text-align:center;margin-top:6px;line-height:1.5}
+  .stream{display:flex;flex-direction:column;gap:6px;max-height:230px;overflow:hidden}
+  .row{display:flex;gap:9px;font-size:11.5px;align-items:baseline;
+    border-left:2px solid var(--ac);padding:5px 8px;background:hsla(220,40%,18%,.45);
+    border-radius:0 8px 8px 0;animation:slideIn .4s ease}
+  @keyframes slideIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1}}
+  .row .t{font-family:var(--mono);color:var(--dim);font-size:10px}
+  .row .ag{font-weight:600;color:var(--ac)}
+  .row .d{color:var(--dim)}
+  /* phases */
+  .phases{display:flex;gap:0;align-items:center;margin-top:16px;justify-content:space-between}
+  .ph{flex:1;text-align:center;position:relative}
+  .ph .b{width:15px;height:15px;border-radius:50%;margin:0 auto 6px;background:hsla(220,30%,40%,.5);
+    transition:.4s}
+  .ph.act .b{background:var(--blue);box-shadow:0 0 16px var(--blue);transform:scale(1.25)}
+  .ph .l{font-size:9.5px;color:var(--dim);font-family:var(--mono)}
+  .ph:not(:last-child):after{content:'';position:absolute;top:7px;left:55%;width:90%;height:2px;
+    background:hsla(220,30%,40%,.4)}
+  .ctl{display:flex;gap:12px;align-items:center;margin:18px 0 4px}
+  button{font-family:var(--sans);font-weight:600;font-size:13px;color:#04101f;cursor:pointer;
+    background:linear-gradient(135deg,var(--cyan),var(--blue));border:0;border-radius:10px;
+    padding:11px 20px;box-shadow:0 6px 20px -6px var(--blue)}
+  button:active{transform:translateY(1px)}
+  .hint{color:var(--dim);font-size:12px}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;font-size:11px;color:var(--dim)}
+  .legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <svg class="logo" viewBox="0 0 32 32"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#7ee0ff"/><stop offset="100%" stop-color="#0277bd"/></linearGradient></defs><path d="M16 4c-2 0-3.5 1.2-4.2 2.8C10.8 5.6 9.2 5 7.5 5 4.5 5 2 7.5 2 10.5c0 1.2.4 2.3 1 3.2L16 28l13-14.3c.6-.9 1-2 1-3.2C30 7.5 27.5 5 24.5 5c-1.7 0-3.3.6-4.3 1.8C19.5 5.2 18 4 16 4z" fill="url(#g)"/></svg>
+    <div>
+      <h1>Flood<span>Ops</span> — How the Agents Work</h1>
+    </div>
+    <div class="loc-chip">
+      <div class="chip">📍 <b>Kathmandu Valley</b> · Bagmati Basin</div>
+      <div class="chip">27.72°N, 85.32°E</div>
+      <div class="chip">source <b>Open-Meteo · GloFAS</b></div>
+    </div>
+  </header>
+  <p class="sub">A glimpse of the 8-agent cascade reacting to a monsoon flood signal on the Bagmati River. Click <b>Run flood simulation</b> to watch the event flow through the agents in real time.</p>
+
+  <div class="ctl">
+    <button id="run">▶ Run flood simulation</button>
+    <span class="hint" id="hint">Idle — Sentinel polling gauges every 15 min…</span>
+  </div>
+
+  <div class="grid">
+    <!-- BASIN MAP -->
+    <div class="glass panel">
+      <h3><span class="pip"></span> Bagmati Basin · Causal Flow Graph</h3>
+      <svg viewBox="0 0 320 300">
+        <!-- flow edges -->
+        <path class="flow" d="M70,40 L150,90"/>
+        <path class="flow" d="M150,90 L150,150"/>
+        <path class="flow" d="M260,70 L160,150" />
+        <path class="flow" d="M150,150 L150,210"/>
+        <path class="flow" d="M150,210 L150,265"/>
+        <!-- animated flood wave down the main stem -->
+        <path id="wave" class="wave" d="M70,40 L150,90 L150,150 L150,210 L150,265" style="opacity:0"/>
+        <!-- nodes -->
+        <g class="node" data-n="0"><circle cx="70" cy="40" r="9" fill="hsla(190,80%,55%,.5)"/><text x="70" y="26" text-anchor="middle">Shivapuri</text></g>
+        <g class="node" data-n="1"><circle cx="260" cy="70" r="8" fill="hsla(190,80%,55%,.4)"/><text x="260" y="56" text-anchor="middle">Bishnumati</text></g>
+        <g class="node" data-n="2"><circle cx="150" cy="90" r="9" fill="hsla(190,80%,55%,.5)"/><text x="150" y="78" text-anchor="middle">Bagmati upper</text></g>
+        <g class="node" data-n="3"><circle cx="150" cy="150" r="10" fill="hsla(200,80%,55%,.55)"/><text x="194" y="153" text-anchor="middle">Pashupati</text></g>
+        <g class="node" data-n="4"><circle cx="150" cy="210" r="12" fill="hsla(210,80%,55%,.6)"/><text x="196" y="213" text-anchor="middle">Chobar ●gauge</text></g>
+        <g class="node" data-n="5"><circle cx="150" cy="265" r="10" fill="hsla(215,70%,55%,.5)"/><text x="150" y="285" text-anchor="middle">Basin outlet</text></g>
+      </svg>
+      <div class="legend">
+        <span><i style="background:var(--cyan)"></i>flood wave</span>
+        <span><i style="background:hsla(200,80%,55%,.7)"></i>watershed node</span>
+        <span>gauge @ Chobar = 4.2 m</span>
+      </div>
+    </div>
+
+    <!-- AGENT PIPELINE -->
+    <div class="glass panel">
+      <h3>The 8-Agent Cascade</h3>
+      <div class="agents" id="agents"></div>
+    </div>
+
+    <!-- LIVE OUTPUT -->
+    <div class="glass panel">
+      <h3><span class="pip"></span> Compound Threat &amp; Activity</h3>
+      <canvas id="radial" width="200" height="200"></canvas>
+      <div style="text-align:center"><span class="meta-score" id="score" style="color:var(--dim)">—</span>
+        <span class="hint" id="conf"></span></div>
+      <div class="hz" id="hz"></div>
+      <div class="action" id="action"></div>
+      <h3 style="margin-top:14px">Agent Activity Stream</h3>
+      <div class="stream" id="stream"></div>
+    </div>
+  </div>
+
+  <!-- PHASES -->
+  <div class="glass panel" style="margin-top:16px">
+    <h3>7-Phase Escalation</h3>
+    <div class="phases" id="phases"></div>
+  </div>
+</div>
+
+<script>
+const AGENTS = [
+  {id:'sentinel_agent', name:'SentinelAgent', role:'z-score anomaly on Bagmati gauge', ac:'#ffd24a', out:'3.8σ HIGH'},
+  {id:'glof_agent', name:'GLOFAgent', role:'glacial-lake dam integrity scan', ac:'#7ee0ff', out:'stable'},
+  {id:'flood_predict_agent', name:'FloodPredictAgent', role:'50-member ensemble + rainfall bias', ac:'#3aa0ff', out:'94% prob'},
+  {id:'urban_risk_agent', name:'UrbanRiskAgent', role:'OSM zones · reflexion per zone', ac:'#5ad19a', out:'6 zones'},
+  {id:'alert_agent', name:'AlertAgent', role:'severity → SMS · radio · sirens', ac:'#ff6b6b', out:'EMERGENCY'},
+  {id:'resource_agent', name:'ResourceAgent', role:'pre-position boats · ORS · meds', ac:'#c98a3a', out:'8 orders'},
+  {id:'disease_risk_agent', name:'DiseaseRiskAgent', role:'post-flood cholera / typhoid risk', ac:'#b85cff', out:'2 hotspots'},
+  {id:'compound_event_agent', name:'CompoundEventAgent', role:'fuse co-occurring hazards', ac:'#ff4d4d', out:'100%'},
+];
+const PHASES = ['MONITOR','ELEVATED','IMMINENT','EVAC','ACTIVE','POST','RECOVERY'];
+
+// build agents
+const aWrap = document.getElementById('agents');
+AGENTS.forEach(a=>{
+  const d=document.createElement('div'); d.className='agent'; d.id='ag-'+a.id;
+  d.style.setProperty('--ac',a.ac);
+  d.innerHTML=`<span class="a-dot"></span><span class="a-name">${a.name}</span>
+    <span class="a-role">${a.role}</span><span class="a-out">${a.out}</span>`;
+  aWrap.appendChild(d);
+});
+// build phases
+const pWrap=document.getElementById('phases');
+PHASES.forEach((p,i)=>{const d=document.createElement('div');d.className='ph';d.id='ph-'+i;
+  d.innerHTML=`<div class="b"></div><div class="l">${p}</div>`;pWrap.appendChild(d);});
+
+const stream=document.getElementById('stream');
+function logRow(a, verb, detail){
+  const r=document.createElement('div'); r.className='row'; r.style.setProperty('--ac',a.ac);
+  const t=new Date().toLocaleTimeString([],{hour12:false});
+  r.innerHTML=`<span class="t">${t}</span><span class="ag">${a.name.replace('Agent','')}</span>
+    <span class="d">${verb}${detail?' — '+detail:''}</span>`;
+  stream.prepend(r); while(stream.children.length>7) stream.lastChild.remove();
+}
+
+// compound radial
+function drawRadial(score, hazards){
+  const c=document.getElementById('radial'), ctx=c.getContext('2d');
+  const W=c.width,H=c.height,cx=W/2,cy=H/2,R=Math.min(W,H)/2-26;
+  ctx.clearRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,.08)';ctx.lineWidth=1;
+  for(let r=R;r>0;r-=R/4){ctx.beginPath();ctx.arc(cx,cy,r,0,7);ctx.stroke();}
+  const COL={flood:'#3aa0ff',glof:'#7ee0ff',landslide:'#c98a3a',disease:'#b85cff'};
+  const n=Math.max(hazards.length,1);
+  hazards.forEach((h,i)=>{const ang=-Math.PI/2+(i/n)*Math.PI*2, sev=Math.max(.1,h.s);
+    const x=cx+Math.cos(ang)*R*sev,y=cy+Math.sin(ang)*R*sev,col=COL[h.t]||'#aaa';
+    ctx.strokeStyle=col;ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(x,y);ctx.stroke();
+    ctx.fillStyle=col;ctx.beginPath();ctx.arc(x,y,4,0,7);ctx.fill();
+    ctx.fillStyle='rgba(255,255,255,.6)';ctx.font='9px JetBrains Mono';ctx.textAlign='center';
+    ctx.fillText(h.t,cx+Math.cos(ang)*(R+13),cy+Math.sin(ang)*(R+13));});
+  const hubR=R*.42, sc=score>=.8?'#ff4d4d':score>=.5?'#ff9a3a':'#5ad19a';
+  const g=ctx.createRadialGradient(cx,cy,2,cx,cy,hubR);g.addColorStop(0,sc);g.addColorStop(1,'rgba(10,15,26,.9)');
+  ctx.fillStyle=g;ctx.beginPath();ctx.arc(cx,cy,hubR,0,7);ctx.fill();
+  ctx.strokeStyle=sc;ctx.lineWidth=2;ctx.beginPath();ctx.arc(cx,cy,hubR,0,7);ctx.stroke();
+  ctx.fillStyle='#fff';ctx.font='600 20px Inter';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(Math.round(score*100)+'%',cx,cy);
+}
+
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+let running=false;
+
+async function run(){
+  if(running) return; running=true;
+  document.querySelectorAll('.agent').forEach(a=>a.classList.remove('on'));
+  document.querySelectorAll('.ph').forEach(p=>p.classList.remove('act'));
+  stream.innerHTML=''; document.getElementById('hz').innerHTML='';
+  document.getElementById('action').textContent=''; document.getElementById('score').textContent='—';
+  document.getElementById('score').style.color='var(--dim)'; document.getElementById('conf').textContent='';
+  const hint=document.getElementById('hint');
+
+  // animate flood wave down the basin
+  const wave=document.getElementById('wave'); wave.style.opacity=1;
+  wave.animate([{strokeDashoffset:340},{strokeDashoffset:0}],{duration:2600,easing:'ease-in'});
+
+  const on=id=>document.getElementById('ag-'+id).classList.add('on');
+  const ph=i=>{document.getElementById('ph-'+i).classList.add('act');};
+
+  hint.textContent='⚠ Anomaly detected on Bagmati gauge…';
+  ph(0);
+  await sleep(500); on('sentinel_agent'); logRow(AGENTS[0],'anomaly detected','4.2 m, 3.8σ above baseline'); ph(1);
+  await sleep(900); on('glof_agent'); logRow(AGENTS[1],'lake scan','Tsho Rolpa integrity 0.72 — stable');
+  await sleep(700); on('flood_predict_agent'); logRow(AGENTS[2],'forecast emitted','94% max probability, peak in 12h'); ph(2);
+  hint.textContent='Ensemble: 50 members · rainfall 180 mm/72h (Open-Meteo) → 94%';
+  await sleep(1000); on('urban_risk_agent'); logRow(AGENTS[3],'urban risk mapped','6 zones · 41,200 at risk · Bagmati Corridor 92%');
+  await sleep(700); on('alert_agent'); logRow(AGENTS[4],'alert dispatched','EMERGENCY → SMS · radio · sirens'); ph(3);
+  await sleep(700); on('resource_agent'); logRow(AGENTS[5],'resources ordered','8 logistics orders pre-positioned'); ph(4);
+  await sleep(900); on('disease_risk_agent'); logRow(AGENTS[6],'disease risk','2 cholera hotspots, 14-day window'); ph(5);
+  // compound fusion
+  await sleep(800); on('compound_event_agent');
+  const hazards=[{t:'flood',s:.94},{t:'landslide',s:.76},{t:'disease',s:.8}];
+  let s=0; const target=1.0;
+  const tick=setInterval(()=>{ s=Math.min(target,s+.07); drawRadial(s,hazards);
+    document.getElementById('score').textContent=Math.round(s*100)+'%';
+    document.getElementById('score').style.color=s>=.8?'#ff4d4d':'#ff9a3a';
+    if(s>=target) clearInterval(tick); },45);
+  logRow(AGENTS[7],'compound threat','3 hazards fused → 100% unified');
+  document.getElementById('conf').textContent='conf 79%';
+  document.getElementById('hz').innerHTML=hazards.map(h=>`<span style="border-color:${({flood:'#3aa0ff',landslide:'#c98a3a',disease:'#b85cff'})[h.t]}">${h.t} ${Math.round(h.s*100)}%</span>`).join('');
+  document.getElementById('action').textContent='UNIFIED EMERGENCY COMMAND: evacuate overlap zone, stage multi-hazard response.';
+  ph(6);
+  hint.textContent='✔ Cascade complete — compound threat 100% · click to replay';
+  running=false;
+}
+document.getElementById('run').onclick=run;
+drawRadial(0,[{t:'flood',s:.1},{t:'landslide',s:.1},{t:'disease',s:.1}]);
+// auto-run once on load
+setTimeout(run, 700);
+</script>
+</body>
+</html>

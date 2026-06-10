@@ -12,19 +12,17 @@ Emits: AlertDispatch (SMS, Radio, Siren payloads)
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from floodops.agents.base import BaseAgent, _as_dict
-from floodops.models.enums import SeverityLevel, TriggerType
 from floodops.models.alert import (
     AlertDispatch,
     CellBroadcast,
     RadioBroadcast,
     SirenActivation,
 )
+from floodops.models.enums import SeverityLevel, TriggerType
 from floodops.models.geo import GeoJsonGeometry
-from floodops.models.glof import GLOFEmergency
 
 
 class AlertAgent(BaseAgent):

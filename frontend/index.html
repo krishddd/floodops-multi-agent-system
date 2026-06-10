@@ -131,6 +131,30 @@
         <div id="scenario-diff" class="scenario-diff"></div>
     </div>
 
+    <!-- Connection state HUD (top-left corner) -->
+    <div id="conn-hud" class="conn-hud connecting">
+        <span class="conn-dot"></span><span id="conn-label">Connecting…</span>
+    </div>
+
+    <!-- Sitrep ticker (top, below phase bar) -->
+    <div id="sitrep-ticker" class="glass-panel sitrep-ticker" style="display:none">
+        <span class="sitrep-tag">SITREP</span>
+        <span id="sitrep-text" class="sitrep-text">Awaiting situation report…</span>
+    </div>
+
+    <!-- Compound Threat Radial (signature panel, left-lower) -->
+    <div id="compound-panel" class="glass-panel compound-panel" style="display:none">
+        <h3 class="panel-title">Compound Threat</h3>
+        <canvas id="compound-radial" width="240" height="240"></canvas>
+        <div id="compound-meta" class="compound-meta"></div>
+    </div>
+
+    <!-- Agent Activity Stream (right-lower) -->
+    <div id="activity-panel" class="glass-panel activity-panel">
+        <h3 class="panel-title">Agent Activity <span id="activity-live" class="live-pip"></span></h3>
+        <div id="activity-stream" class="activity-stream"></div>
+    </div>
+
     <!-- Spatial "why" card (appears on click) -->
     <div id="why-card" class="glass-panel why-card" style="display:none"></div>
 
@@ -162,6 +186,17 @@
     <!-- Toast Notifications -->
     <div id="toast-container" class="toast-container"></div>
 
+    <!-- Runtime config — relative URLs route through the Vite proxy (dev) or
+         the compose backend service (Docker). Override per deploy as needed. -->
+    <script>
+      window.FLOODOPS_CONFIG = {
+        apiUrl: '/api/v1',
+        wsUrl: (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host + '/ws/flood',
+        mapsApiKey: '%VITE_GOOGLE_MAPS_API_KEY%',
+        center: { lat: 27.7172, lng: 85.3240 },
+        zoom: 12,
+      };
+    </script>
     <script type="module" src="/src/main.js"></script>
 </body>
 </html>

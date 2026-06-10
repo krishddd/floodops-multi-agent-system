@@ -1,11 +1,11 @@
 """FloodOps data models package."""
 
 from floodops.models.enums import (
-    FloodPhase,
     AlertLevel,
+    FloodPhase,
+    Pathogen,
     SeverityLevel,
     TriggerType,
-    Pathogen,
 )
 
 __all__ = [

@@ -7,7 +7,7 @@ to Drive, and sending alert emails via Gmail.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 
 async def log_to_sheets(session: dict, spreadsheet_id: str, values: list[list[Any]]) -> dict:
@@ -37,7 +37,9 @@ async def upload_to_drive(session: dict, filename: str, content: bytes, mime_typ
 
 async def send_alert_email(session: dict, to: str, subject: str, body: str) -> dict:
     """Send an alert email via Gmail API."""
-    import httpx, base64
+    import base64
+
+    import httpx
     token = session.get("tokens", {}).get("access_token", "")
     message = f"To: {to}\r\nSubject: {subject}\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{body}"
     raw = base64.urlsafe_b64encode(message.encode()).decode()

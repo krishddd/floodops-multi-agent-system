@@ -10,7 +10,6 @@ the ground floor" — questions a watershed flood model can't answer.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -41,9 +40,9 @@ class ZoneRiskReport(BaseModel):
     impervious_fraction: float = Field(0.0, ge=0.0, le=1.0, description="Fraction of concrete/asphalt")
 
     # LLM reasoning for spatial "why" card
-    reasoning: Optional[str] = Field(None, description="LLM-generated explanation of this zone's risk")
+    reasoning: str | None = Field(None, description="LLM-generated explanation of this zone's risk")
     confidence: float = Field(0.5, ge=0.0, le=1.0, description="Confidence in this assessment — maps to visual opacity")
-    competing_hypothesis: Optional[str] = Field(None, description="What minority ensemble members predict for this zone")
+    competing_hypothesis: str | None = Field(None, description="What minority ensemble members predict for this zone")
 
 
 class RouteSet(BaseModel):
@@ -78,7 +77,7 @@ class DamagePolygon(BaseModel):
     damage_type: str = Field(..., description="structural, agricultural, infrastructure")
     area_km2: float = Field(..., ge=0)
     building_count: int = Field(0, ge=0)
-    estimated_cost_usd: Optional[float] = None
+    estimated_cost_usd: float | None = None
 
 
 class UrbanRiskReport(BaseModel):

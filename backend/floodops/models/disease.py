@@ -11,7 +11,6 @@ appear, an outbreak is preventable.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -24,7 +23,7 @@ class PathogenRisk(BaseModel):
 
     pathogen: Pathogen
     risk_score: float = Field(..., ge=0.0, le=1.0)
-    peak_date: Optional[datetime] = None
+    peak_date: datetime | None = None
     incubation_days_min: int = Field(..., ge=0)
     incubation_days_max: int = Field(..., ge=0)
     intervention_window_hours: float = Field(

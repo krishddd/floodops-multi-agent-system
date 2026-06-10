@@ -31,9 +31,10 @@ import logging
 import time
 import uuid
 from collections import defaultdict
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ class CronJob:
     handler: CronHandler
     interval_seconds: float  # Derived from cron expression for in-memory scheduling
     last_run: float = 0.0
-    task: Optional[asyncio.Task[None]] = None
+    task: asyncio.Task[None] | None = None
 
 
 class EventBus:
@@ -87,7 +88,7 @@ class EventBus:
         self._direct_handlers: dict[str, DirectHandler] = {}
         self._cron_jobs: dict[str, CronJob] = {}
         self._pending: list[PendingEvent] = []
-        self._ws_broadcast: Optional[WSBroadcastHook] = None
+        self._ws_broadcast: WSBroadcastHook | None = None
         self._event_history: list[PendingEvent] = []
         self._running: bool = False
         self._cron_tasks: list[asyncio.Task[None]] = []
@@ -252,7 +253,7 @@ class EventBus:
         self,
         schedule: str,
         handler: CronHandler,
-        job_id: Optional[str] = None,
+        job_id: str | None = None,
     ) -> str:
         """Register a periodic task.
 
@@ -368,7 +369,7 @@ class EventBus:
         """Return subscriber count for a channel."""
         return len(self._subscribers.get(channel, []))
 
-    def get_event_history(self, channel: Optional[str] = None, limit: int = 50) -> list[dict[str, Any]]:
+    def get_event_history(self, channel: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
         """Return recent events, optionally filtered by channel."""
         events = self._event_history
         if channel:

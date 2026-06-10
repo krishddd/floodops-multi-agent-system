@@ -24,7 +24,7 @@ async def monitoring_node(state: FloodSystemState) -> dict:
 
     Active agents: SentinelAgent, GLOFAgent, UrbanRiskAgent
     Actions: Poll sensors, scan glacial lakes, update city risk maps
-    
+
     SentinelAgent and GLOFAgent run on CRON — they poll independently.
     This node just logs that we're in monitoring and returns updated phase.
     """

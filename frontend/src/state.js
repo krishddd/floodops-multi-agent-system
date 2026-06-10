@@ -17,7 +17,29 @@ const _state = {
     ensemble: { members: [], fan: null, disagreement: null },
     metrics: { popAtRisk: 0, peakEta: '—', maxProbability: 0 },
     selectedFeature: null,
+    // ── Live domain state (fed by WebSocket) ──
+    compoundThreats: [],   // latest CompoundThreat objects
+    auditLog: [],          // agent activity entries (capped)
+    sitrep: '',            // latest LLM situation report
+    alerts: [],            // alert dispatches
+    connection: 'connecting', // live | reconnecting | offline | connecting
 };
+
+const MAX_AUDIT = 60;
+
+/** Prepend an agent-activity entry (bounded). */
+export function pushActivity(entry) {
+    _state.auditLog.unshift(entry);
+    if (_state.auditLog.length > MAX_AUDIT) _state.auditLog.length = MAX_AUDIT;
+    _listeners.forEach(fn => fn(_state));
+}
+
+/** Record a compound threat (newest first, bounded). */
+export function pushCompoundThreat(threat) {
+    _state.compoundThreats.unshift(threat);
+    if (_state.compoundThreats.length > 20) _state.compoundThreats.length = 20;
+    _listeners.forEach(fn => fn(_state));
+}
 
 const _listeners = new Set();
 

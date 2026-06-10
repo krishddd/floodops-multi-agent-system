@@ -13,8 +13,11 @@ import { initChat } from './panels/chat.js';
 import { renderProbabilityFan } from './ensemble/probability-fan.js';
 import { renderDisagreementBadge, fetchDisagreement } from './ensemble/disagreement.js';
 import { fetchSpaghettiData, fetchRepresentatives } from './ensemble/spaghetti.js';
-import { getState, subscribe, setState } from './state.js';
-import { connect, onMessage } from './websocket.js';
+import { getState, subscribe, setState, pushCompoundThreat } from './state.js';
+import { connect, onMessage, onConnectionChange } from './websocket.js';
+import { initCompoundPanel, renderCompoundThreat } from './panels/compound-panel.js';
+import { initActivityStream, recordChannelEvent } from './panels/activity-stream.js';
+import { initSitrep, refreshSitrep } from './panels/sitrep.js';
 
 import { getMockData } from './mockData.js';
 import { showToast } from './toast.js';
@@ -25,30 +28,82 @@ let _mapOverlay = null;
 async function bootstrap() {
     console.log('🌊 Starting FloodOps v3...');
 
-    // 1. Initialize Map
+    // 1. Initialize Map (resilient — the command deck still works with no
+    //    Google Maps key; the basemap simply won't render).
     const mapContainer = document.getElementById('map-container');
-    const { map, overlay } = await initMap(mapContainer, window.FLOODOPS_CONFIG);
-    _mapOverlay = overlay;
-    setupInteractions(overlay);
+    // Google calls this global on auth failure (bad key, referrer not allowed,
+    // API not enabled, billing off). Without it the map just stays blank/dark
+    // with no explanation — surface the real reason instead.
+    window.gm_authFailure = () => {
+        console.error(
+            'Google Maps auth FAILED. Common causes:\n' +
+            '  • API key restricted to referrers that exclude http://localhost:5173/* \n' +
+            '  • Maps JavaScript API not enabled on the key\'s project\n' +
+            '  • Billing not enabled on the Cloud project\n' +
+            'Fix in Cloud Console → APIs & Services → Credentials → your key.'
+        );
+        mapContainer.classList.add('map-disabled');
+        showToast('Google Maps auth failed — check key restrictions/billing (see console)', 'error');
+    };
+
+    const mapsKey = window.FLOODOPS_CONFIG.mapsApiKey;
+    try {
+        if (!mapsKey || mapsKey.startsWith('%')) {
+            // Empty, or an unsubstituted Vite placeholder (dev server not restarted).
+            throw new Error(
+                mapsKey.startsWith('%')
+                    ? 'Maps key is an unsubstituted %VITE_…% placeholder — restart `npm run dev`'
+                    : 'no Maps key configured'
+            );
+        }
+        const { overlay } = await initMap(mapContainer, window.FLOODOPS_CONFIG);
+        _mapOverlay = overlay;
+        setupInteractions(overlay);
+        console.log('🗺️ Map initialized');
+    } catch (e) {
+        console.warn('Map init skipped — panels still live. Reason:', e.message);
+        mapContainer.classList.add('map-disabled');
+        showToast(`Map disabled: ${e.message}`, 'warning');
+    }
 
     // 2. Initialize UI Panels
     initLayerPanel(renderFrame);
     initScenarioPanel();
     initChat();
+    initCompoundPanel();
+    initActivityStream();
+    initSitrep();
 
-    // 3. Connect WebSocket for live phase/event updates
+    // 3. Connect WebSocket for live phase/event updates + live agent stream
     connect(window.FLOODOPS_CONFIG.wsUrl);
-    
+    onConnectionChange(updateConnHud);
+    wireLiveChannels();
+
     onMessage('initial_state', (data) => {
+        // Full snapshot — also resyncs phase, sitrep, and compound threats.
         setState({ phase: data.phase, eventId: data.event_id });
         updatePhaseBar(data.phase);
+        if (Array.isArray(data.compound_threats) && data.compound_threats.length) {
+            const latest = data.compound_threats[data.compound_threats.length - 1];
+            pushCompoundThreat(latest);
+            renderCompoundThreat(latest);
+        }
+        refreshSitrep();
     });
-    
+
     onMessage('heartbeat', (data) => {
-        if (data.phase !== getState().phase) {
+        if (data.phase && data.phase !== getState().phase) {
             setState({ phase: data.phase });
             updatePhaseBar(data.phase);
         }
+    });
+
+    onMessage('phase_transition', (data) => {
+        setState({ phase: data.phase });
+        updatePhaseBar(data.phase);
+        triggerPhaseSweep();
+        refreshSitrep();
+        showToast(`Phase → ${(data.phase || '').replace(/^\d+_/, '')}`, 'warning');
     });
 
     // 4. Initialize Timeline & fetch initial data
@@ -127,6 +182,60 @@ function renderFrame() {
 
     const layers = buildLayers(state.layerData, state.layers);
     updateLayers(layers);
+}
+
+// ── Live agent stream wiring ─────────────────────────────────────────
+const LIVE_CHANNELS = [
+    'anomaly_alerts', 'flood_forecasts', 'urban_risk', 'alert_dispatches',
+    'glof_emergencies', 'disease_risk', 'resource_orders', 'compound_threats',
+    'agent_errors',
+];
+
+function wireLiveChannels() {
+    LIVE_CHANNELS.forEach((channel) => {
+        onMessage(channel, (data) => {
+            recordChannelEvent(channel, data);
+            if (channel === 'flood_forecasts' && data && data.max_probability != null) {
+                setState({ metrics: { ...getState().metrics,
+                    maxProbability: data.max_probability } });
+                updateMetrics({ max_probability: data.max_probability });
+            }
+            if (channel === 'compound_threats' && data) {
+                pushCompoundThreat(data);
+                renderCompoundThreat(data);
+            }
+            pulseLive();
+        });
+    });
+}
+
+function updateConnHud(state) {
+    const hud = document.getElementById('conn-hud');
+    const label = document.getElementById('conn-label');
+    if (!hud || !label) return;
+    hud.classList.remove('live', 'reconnecting', 'offline', 'connecting');
+    hud.classList.add(state);
+    label.textContent = ({
+        live: 'Live', reconnecting: 'Reconnecting…', offline: 'Offline',
+        connecting: 'Connecting…',
+    })[state] || state;
+}
+
+let _pulseTimer = null;
+function pulseLive() {
+    const pip = document.getElementById('activity-live');
+    if (!pip) return;
+    pip.classList.add('on');
+    clearTimeout(_pulseTimer);
+    _pulseTimer = setTimeout(() => pip.classList.remove('on'), 400);
+}
+
+function triggerPhaseSweep() {
+    const el = document.body;
+    el.classList.remove('phase-sweep');
+    void el.offsetWidth;
+    el.classList.add('phase-sweep');
+    setTimeout(() => el.classList.remove('phase-sweep'), 1200);
 }
 
 // Start

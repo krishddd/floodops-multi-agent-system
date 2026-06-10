@@ -9,8 +9,7 @@ Data cadence: 🟢 15 minutes (real-time river gauges)
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any
 
 from floodops.connectors.base import BaseConnector
 from floodops.models.enums import DataSource
@@ -43,7 +42,7 @@ class USGSConnector(BaseConnector):
         except Exception:
             return False
 
-    async def fetch_latest(self, site_ids: Optional[list[str]] = None, bbox: Optional[BBox] = None, **kwargs: Any) -> dict:
+    async def fetch_latest(self, site_ids: list[str] | None = None, bbox: BBox | None = None, **kwargs: Any) -> dict:
         """Fetch latest gauge readings for specified sites or bounding box."""
         params: dict[str, str] = {
             "format": "json",

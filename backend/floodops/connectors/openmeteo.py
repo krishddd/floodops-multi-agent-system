@@ -2,10 +2,17 @@
 🟢 LIVE (keyless) — Open-Meteo connector.
 
 Two free, no-key endpoints:
-  * Forecast API   — hourly precipitation (mm) → rainfall intensity for Sentinel
-                     and the FloodPredict ensemble seed.
-  * Flood API      — GloFAS river-discharge ensemble percentiles (mean/max/p25/p75)
-                     → a real uncertainty envelope for flood forecasting.
+  * Forecast API   — paper-faithful meteorological FORCING (precipitation,
+                     2-m temperature, shortwave radiation, snowfall, surface
+                     pressure) → the inputs the FloodPredict ensemble is driven by.
+  * Flood API      — GloFAS river-discharge ensemble percentiles → a BENCHMARK
+                     REFERENCE only, never a model input.
+
+Why the distinction: Nearing et al. (Nature 627, 2024) drive the AI flood model
+from meteorological + geophysical inputs and use **no streamflow as input** (real-
+time discharge isn't available in ungauged basins, and GloFAS is the benchmark the
+paper beats). So ``get_meteorology()`` is the forcing the predictor consumes;
+``get_discharge_ensemble()`` is kept purely as a comparison reference.
 
 No API key required. Rate-limited free tier, so cache TTL is 900s (data updates
 hourly) and every method degrades to ``None`` on failure so agents fall back to
@@ -14,7 +21,7 @@ their deterministic mock generation.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from floodops.connectors.base import BaseConnector
 from floodops.models.enums import DataSource
@@ -47,19 +54,72 @@ class OpenMeteoConnector(BaseConnector):
         except Exception:
             return False
 
-    async def fetch_latest(self, bbox: Optional[BBox] = None, **kwargs: Any) -> dict:
-        """Return {rainfall, discharge} for the centre of ``bbox`` (or Kathmandu)."""
+    async def fetch_latest(self, bbox: BBox | None = None, **kwargs: Any) -> dict:
+        """Return forcing + reference data for the centre of ``bbox`` (or Kathmandu).
+
+        Keys:
+          * ``meteorology`` — paper-faithful forcing the predictor consumes.
+          * ``rainfall``    — precipitation-only summary (back-compat).
+          * ``discharge``   — GloFAS ensemble, BENCHMARK REFERENCE only (not an input).
+        """
         if bbox is not None:
             c = bbox.center()
             lat, lng = c.lat, c.lng
         else:
             lat, lng = 27.7, 85.3
         return {
+            "meteorology": await self.get_meteorology(lat, lng),
             "rainfall": await self.get_rainfall(lat, lng),
             "discharge": await self.get_discharge_ensemble(lat, lng),
         }
 
-    async def get_rainfall(self, lat: float, lng: float) -> Optional[dict]:
+    async def get_meteorology(self, lat: float, lng: float) -> dict | None:
+        """Paper-faithful meteorological forcing (Nearing et al. 2024 input set).
+
+        Fetches the Open-Meteo analogues of the paper's ECMWF IFS HRES / ERA5-Land
+        variables — precipitation, 2-m temperature, shortwave radiation, snowfall,
+        surface pressure — and summarises the next 72h. ``positive_degree_hours``
+        is the snowmelt driver (sum of hourly temps above 0 °C), which matters for
+        the Himalayan basin where melt compounds rainfall. Returns None on failure.
+        """
+        try:
+            data = await self.fetch_with_retry(
+                self.FORECAST_BASE,
+                params={
+                    "latitude": lat, "longitude": lng,
+                    "hourly": ("precipitation,temperature_2m,shortwave_radiation,"
+                               "snowfall,surface_pressure"),
+                    "forecast_days": 7,
+                },
+            )
+            hourly = data.get("hourly", {})
+
+            def _clean(key: str) -> list[float]:
+                return [v for v in hourly.get(key, []) if v is not None]
+
+            precip = _clean("precipitation")
+            temp = _clean("temperature_2m")
+            radiation = _clean("shortwave_radiation")
+            snowfall = _clean("snowfall")
+            pdh = round(sum(t for t in temp[:72] if t > 0), 1)
+            return {
+                "precip_total_72h_mm": round(sum(precip[:72]), 1),
+                "peak_precip_mm_h": max(precip) if precip else 0.0,
+                "mean_temp_c": round(sum(temp[:72]) / len(temp[:72]), 1) if temp else None,
+                "positive_degree_hours_72h": pdh,
+                "snowfall_total_72h_cm": round(sum(snowfall[:72]), 1),
+                "mean_shortwave_w_m2": (
+                    round(sum(radiation[:72]) / len(radiation[:72]), 1) if radiation else None
+                ),
+                "variables": [
+                    "precipitation", "temperature_2m", "shortwave_radiation",
+                    "snowfall", "surface_pressure",
+                ],
+            }
+        except Exception:
+            return None
+
+    async def get_rainfall(self, lat: float, lng: float) -> dict | None:
         """Hourly precipitation forecast (mm). Returns None on failure."""
         try:
             data = await self.fetch_with_retry(
@@ -81,8 +141,13 @@ class OpenMeteoConnector(BaseConnector):
         except Exception:
             return None
 
-    async def get_discharge_ensemble(self, lat: float, lng: float) -> Optional[dict]:
-        """GloFAS river-discharge ensemble percentiles. Returns None on failure."""
+    async def get_discharge_ensemble(self, lat: float, lng: float) -> dict | None:
+        """GloFAS river-discharge ensemble percentiles — BENCHMARK REFERENCE ONLY.
+
+        This is the system Nearing et al. (2024) benchmark against, not an input to
+        the AI predictor (the paper uses no streamflow as input). Kept for side-by-
+        side comparison/UI, never fed into the forecast. Returns None on failure.
+        """
         try:
             data = await self.fetch_with_retry(
                 self.FLOOD_BASE,

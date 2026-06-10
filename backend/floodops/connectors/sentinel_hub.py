@@ -1,9 +1,12 @@
 """⚪ MOCK — Sentinel Hub SAR connector. Returns realistic SAR-derived flood extent stubs."""
 from __future__ import annotations
-from typing import Any, Optional
+
+from typing import Any
+
 from floodops.connectors.base import BaseConnector
 from floodops.models.enums import DataSource
-from floodops.models.geo import BBox, GeoJsonFeatureCollection, GeoJsonFeature, GeoJsonGeometry
+from floodops.models.geo import BBox, GeoJsonFeature, GeoJsonFeatureCollection, GeoJsonGeometry
+
 
 class SentinelHubConnector(BaseConnector):
     source = DataSource.SENTINEL_SAR
@@ -13,7 +16,7 @@ class SentinelHubConnector(BaseConnector):
     async def health_check(self) -> bool:
         return True
 
-    async def fetch_latest(self, bbox: Optional[BBox] = None, **kwargs: Any) -> dict:
+    async def fetch_latest(self, bbox: BBox | None = None, **kwargs: Any) -> dict:
         bbox = bbox or BBox(south=27.6, west=85.2, north=27.8, east=85.4)
         return {
             "source": "sentinel_hub_mock",

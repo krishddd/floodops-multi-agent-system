@@ -21,9 +21,8 @@ Data flow::
 from __future__ import annotations
 
 import logging
-import uuid
 from datetime import datetime, timedelta
-from typing import Any, Literal
+from typing import Any
 
 from floodops.agents.base import BaseAgent
 from floodops.config import CRON_GLOF_LAKES, GLOF_BREACH_THRESHOLD, GLOF_VOLUME_ALERT_FACTOR

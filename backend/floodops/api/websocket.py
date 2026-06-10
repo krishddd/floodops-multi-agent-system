@@ -1,10 +1,13 @@
 """WebSocket handler — push live updates to all connected frontend clients."""
 from __future__ import annotations
+
 import asyncio
 import json
 from datetime import datetime
+
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from floodops.api.app import get_state, _app_state
+
+from floodops.api.app import _app_state, get_state
 
 router = APIRouter()
 _connections: set[WebSocket] = set()
@@ -89,7 +92,7 @@ async def websocket_flood(ws: WebSocket):
                 msg = json.loads(data)
                 if msg.get("type") == "ping":
                     await ws.send_json({"type": "pong", "timestamp": datetime.utcnow().isoformat() + "Z"})
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Send heartbeat
                 await ws.send_json({"type": "heartbeat", "timestamp": datetime.utcnow().isoformat() + "Z",
                                      "phase": str(get_state().get("current_phase", "00_MONITORING"))})

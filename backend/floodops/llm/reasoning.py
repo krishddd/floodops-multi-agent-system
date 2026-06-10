@@ -8,7 +8,7 @@ and prompt templates.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from floodops.llm.client import FloodLLMClient
 from floodops.models.orchestrator import DataSourceBadge, WhyCardData
@@ -17,7 +17,7 @@ from floodops.models.orchestrator import DataSourceBadge, WhyCardData
 class FloodReasoner:
     """Domain-specific reasoning layer for FloodOps."""
 
-    def __init__(self, llm_client: Optional[FloodLLMClient] = None):
+    def __init__(self, llm_client: FloodLLMClient | None = None):
         self.llm = llm_client or FloodLLMClient()
 
     async def generate_why_card(self, feature_data: dict[str, Any]) -> WhyCardData:

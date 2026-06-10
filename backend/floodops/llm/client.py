@@ -8,7 +8,7 @@ no generic "You are a flood expert" narration.
 
 from __future__ import annotations
 
-from typing import Any, Optional, TypeVar
+from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
@@ -36,9 +36,9 @@ class FloodLLMClient:
 
     def __init__(
         self,
-        api_key: Optional[str] = None,  # retained for backwards-compat callers
-        model: Optional[str] = None,
-        provider: Optional[LLMProvider] = None,
+        api_key: str | None = None,  # retained for backwards-compat callers
+        model: str | None = None,
+        provider: LLMProvider | None = None,
     ):
         self._provider: LLMProvider = provider or make_provider()
 
@@ -46,7 +46,7 @@ class FloodLLMClient:
         """True when a real LLM backend is configured and reachable."""
         return self._provider.available()
 
-    async def generate(self, prompt: str, system_instruction: Optional[str] = None) -> str:
+    async def generate(self, prompt: str, system_instruction: str | None = None) -> str:
         """Generate free text via the configured provider.
 
         Falls back to a clearly-labelled template string when no key is set.
@@ -62,9 +62,9 @@ class FloodLLMClient:
         self,
         system: str,
         data: Any,
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
         output_schema: type[T] = None,  # type: ignore[assignment]
-    ) -> Optional[T]:
+    ) -> T | None:
         """Structured reasoning: return a validated ``output_schema`` instance.
 
         Returns ``None`` when no LLM is configured so callers fall back to their
@@ -125,13 +125,14 @@ class FloodLLMClient:
             "explanation": explanation,
             "confidence": feature_data.get("confidence", 0.75),
             "majority_view": f"{feature_data.get('n_members_flood', 38)} of {feature_data.get('total_members', 50)} members predict significant flooding",
-            "minority_view": f"Remaining members predict minor impact if rainfall shifts",
+            "minority_view": "Remaining members predict minor impact if rainfall shifts",
         }
 
     async def justify_transition(self, from_phase: str, to_phase: str, trigger_data: dict, gate_conditions: dict) -> str:
         """Generate LLM justification for a phase transition."""
-        from floodops.llm.prompts import TRANSITION_JUSTIFICATION
         import json
+
+        from floodops.llm.prompts import TRANSITION_JUSTIFICATION
 
         prompt = TRANSITION_JUSTIFICATION.format(
             from_phase=from_phase,
@@ -145,12 +146,34 @@ class FloodLLMClient:
         """Generate situation report for decision-makers."""
         from floodops.llm.prompts import SITREP
 
+        _cp = state.get("current_phase", "unknown")
+        phase = getattr(_cp, "value", str(_cp)).replace("_", " ").strip()
+        # Drop the leading numeric prefix (e.g. "00 MONITORING" -> "MONITORING").
+        phase = phase.split(" ", 1)[-1] if phase[:2].isdigit() else phase
+        n_alerts = len(state.get("active_alerts", []))
+        forecasts = state.get("flood_forecasts", [])
+        max_prob = forecasts[-1].get("max_probability", 0) if forecasts else 0
+        pop = sum(r.get("total_population_at_risk", 0) for r in state.get("urban_risk_reports", []))
+        n_compound = len(state.get("compound_threats", []))
+
+        if not self.available():
+            # Clean deterministic sitrep (no prompt-text leakage in the no-key demo).
+            parts = [f"Phase {phase}."]
+            if forecasts:
+                parts.append(f"Peak flood probability {max_prob:.0%} across {len(forecasts)} forecast(s).")
+            if pop:
+                parts.append(f"~{pop:,} people in mapped risk zones.")
+            if n_compound:
+                parts.append(f"{n_compound} compound multi-hazard threat(s) active.")
+            if n_alerts:
+                parts.append(f"{n_alerts} active anomaly alert(s).")
+            if len(parts) == 1:
+                parts.append("Baseline monitoring — no active flood signals.")
+            return " ".join(parts)
+
         prompt = SITREP.format(
-            current_phase=state.get("current_phase", "unknown"),
-            n_alerts=len(state.get("active_alerts", [])),
-            n_forecasts=len(state.get("flood_forecasts", [])),
-            max_prob=state.get("flood_forecasts", [{}])[-1].get("max_probability", 0) if state.get("flood_forecasts") else 0,
-            pop_at_risk=sum(r.get("total_population_at_risk", 0) for r in state.get("urban_risk_reports", [])),
+            current_phase=phase, n_alerts=n_alerts, n_forecasts=len(forecasts),
+            max_prob=max_prob, pop_at_risk=pop,
         )
         return await self.generate(prompt)
 

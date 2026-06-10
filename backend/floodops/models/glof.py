@@ -13,11 +13,11 @@ agent communication.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from floodops.models.geo import Coordinate, BBox, GeoJsonGeometry
+from floodops.models.geo import BBox, Coordinate, GeoJsonGeometry
 
 
 class VolumeEstimate(BaseModel):
@@ -42,7 +42,7 @@ class LakeHealthReport(BaseModel):
     """
 
     lake_id: str
-    lake_name: Optional[str] = None
+    lake_name: str | None = None
     location: Coordinate
     bbox: BBox
     elevation_m: float = Field(..., description="Lake surface elevation")
@@ -62,10 +62,10 @@ class LakeHealthReport(BaseModel):
 
     risk_level: str = Field(..., description="LOW / MEDIUM / HIGH / CRITICAL")
     scan_date: datetime
-    next_scan_date: Optional[datetime] = None
+    next_scan_date: datetime | None = None
 
     # LLM interpretation
-    assessment: Optional[str] = Field(
+    assessment: str | None = Field(
         None,
         description="LLM-generated assessment explaining why this "
                     "integrity score was assigned and what to watch for."
@@ -102,7 +102,7 @@ class GLOFEmergency(BaseModel):
     """
 
     lake_id: str
-    lake_name: Optional[str] = None
+    lake_name: str | None = None
     integrity_score: float = Field(..., ge=0.0, le=1.0)
     impact_zone: ImpactZone
     breach_type: Literal["confirmed", "imminent"] = "imminent"

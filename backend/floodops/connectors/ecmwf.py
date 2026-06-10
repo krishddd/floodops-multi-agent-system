@@ -13,7 +13,7 @@ the most decision-relevant information in the entire system.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from floodops.connectors.base import BaseConnector
 from floodops.models.enums import DataSource
@@ -46,7 +46,7 @@ class ECMWFConnector(BaseConnector):
         except Exception:
             return False
 
-    async def fetch_latest(self, bbox: Optional[BBox] = None, **kwargs: Any) -> dict:
+    async def fetch_latest(self, bbox: BBox | None = None, **kwargs: Any) -> dict:
         """Fetch latest ensemble forecast data.
 
         NOTE: CDS API uses an async queue system — requests are submitted

@@ -1,8 +1,11 @@
 """⚪ MOCK — Dartmouth Flood Observatory. Returns historical flood event stubs."""
 from __future__ import annotations
+
 from typing import Any
+
 from floodops.connectors.base import BaseConnector
 from floodops.models.enums import DataSource
+
 
 class DartmouthConnector(BaseConnector):
     source = DataSource.DARTMOUTH

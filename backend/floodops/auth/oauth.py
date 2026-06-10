@@ -7,7 +7,6 @@ Required for Google Workspace API access (Sheets, Drive, Gmail).
 
 from __future__ import annotations
 
-from typing import Optional
 from floodops.config import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI
 
 SCOPES = [
@@ -61,7 +60,7 @@ async def exchange_code(code: str) -> dict:
     return {"session_id": session_id, "user": user_info}
 
 
-def get_session(session_id: str) -> Optional[dict]:
+def get_session(session_id: str) -> dict | None:
     return _sessions.get(session_id)
 
 

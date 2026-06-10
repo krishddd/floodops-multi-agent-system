@@ -15,7 +15,7 @@ import hashlib
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
@@ -43,9 +43,9 @@ class BaseConnector(ABC):
         self._timeout = timeout_seconds
         self._cache: dict[str, tuple[float, Any]] = {}
         self._last_request_time: float = 0.0
-        self._last_data_time: Optional[str] = None
+        self._last_data_time: str | None = None
         self._status: ConnectorStatus = ConnectorStatus.MOCK if self.is_mock else ConnectorStatus.LIVE
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
@@ -66,10 +66,11 @@ class BaseConnector(ABC):
         self._last_request_time = time.monotonic()
 
     def _cache_key(self, *args: Any) -> str:
+        # MD5 here is a non-cryptographic cache key, not a security primitive.
         raw = str(args).encode()
-        return hashlib.md5(raw).hexdigest()
+        return hashlib.md5(raw, usedforsecurity=False).hexdigest()
 
-    def _get_cached(self, key: str) -> Optional[Any]:
+    def _get_cached(self, key: str) -> Any | None:
         if key in self._cache:
             ts, data = self._cache[key]
             if time.time() - ts < self._cache_ttl:
@@ -80,7 +81,7 @@ class BaseConnector(ABC):
     def _set_cached(self, key: str, data: Any) -> None:
         self._cache[key] = (time.time(), data)
 
-    async def fetch_with_retry(self, url: str, params: Optional[dict] = None, headers: Optional[dict] = None) -> dict:
+    async def fetch_with_retry(self, url: str, params: dict | None = None, headers: dict | None = None) -> dict:
         """Fetch URL with rate limiting, retries, and exponential backoff."""
         cache_key = self._cache_key(url, params)
         cached = self._get_cached(cache_key)

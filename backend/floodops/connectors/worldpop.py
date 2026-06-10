@@ -1,10 +1,13 @@
 """⚪ MOCK — WorldPop population density. Returns synthetic 100m grids."""
 from __future__ import annotations
-from typing import Any, Optional
+
+import random
+from typing import Any
+
 from floodops.connectors.base import BaseConnector
 from floodops.models.enums import DataSource
 from floodops.models.geo import BBox
-import random
+
 
 class WorldPopConnector(BaseConnector):
     source = DataSource.WORLDPOP
@@ -14,7 +17,7 @@ class WorldPopConnector(BaseConnector):
     async def health_check(self) -> bool:
         return True
 
-    async def fetch_latest(self, bbox: Optional[BBox] = None, **kwargs: Any) -> dict:
+    async def fetch_latest(self, bbox: BBox | None = None, **kwargs: Any) -> dict:
         random.seed(321)
         bbox = bbox or BBox(south=27.6, west=85.2, north=27.8, east=85.4)
         cells = []

@@ -1,8 +1,10 @@
 """What-if scenario endpoints."""
 from __future__ import annotations
+
 import uuid
-from datetime import datetime
+
 from fastapi import APIRouter
+
 from floodops.models.geo import GeoJsonFeatureCollection
 from floodops.models.scenario import ScenarioDiff, ScenarioParams, ScenarioPreset, ScenarioResult
 

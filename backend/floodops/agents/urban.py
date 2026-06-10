@@ -13,14 +13,13 @@ Emits: UrbanRiskReport → urban_risk queue
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from floodops.agents.base import BaseAgent, _as_dict
 from floodops.llm.prompts import URBAN_AGENT_SYSTEM_PROMPT
 from floodops.models.enums import TriggerType
+from floodops.models.geo import BBox, GeoJsonFeatureCollection
 from floodops.models.reasoning import ReasonedAssessment
-from floodops.models.geo import BBox, GeoJsonFeatureCollection, GeoJsonGeometry
 from floodops.models.urban import (
     RouteSet,
     ShelterInfo,
@@ -72,7 +71,7 @@ class UrbanRiskAgent(BaseAgent):
         ranked = sorted(districts.items(), key=lambda t: t[1], reverse=True)
         return "; ".join(f"{d} {r:.0%}" for d, r in ranked[:4])
 
-    async def map_urban_risk(self, forecast_data: dict[str, Any]) -> Optional[UrbanRiskReport]:
+    async def map_urban_risk(self, forecast_data: dict[str, Any]) -> UrbanRiskReport | None:
         """Intersect flood forecast with urban layers.
 
         Steps:

@@ -9,7 +9,6 @@ and distributing medical supplies AFTER the flood to disease hotspots.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -40,7 +39,7 @@ class LogisticsOrder(BaseModel):
     """A single supply movement order."""
 
     order_id: str
-    vehicle_id: Optional[str] = None
+    vehicle_id: str | None = None
     route: GeoJsonGeometry = Field(..., description="GeoJSON LineString of vehicle route")
     payload: list[SupplyItem] = Field(default_factory=list)
     origin: Coordinate
@@ -74,7 +73,7 @@ class DistributionPlan(BaseModel):
         ..., ge=0,
         description="Must arrive before symptom onset. Cholera: 48h. Typhoid: 144h."
     )
-    route: Optional[GeoJsonGeometry] = None
+    route: GeoJsonGeometry | None = None
     priority: int = Field(1, ge=1, description="1=highest priority")
 
 

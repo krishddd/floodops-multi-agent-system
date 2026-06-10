@@ -14,11 +14,10 @@ disagreement badges all come from these models.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from floodops.models.geo import BBox, GeoJsonGeometry, GeoJsonFeatureCollection
+from floodops.models.geo import BBox, GeoJsonFeatureCollection, GeoJsonGeometry
 
 
 class FloodScenario(BaseModel):
@@ -150,6 +149,46 @@ class EnsembleDisagreement(BaseModel):
     )
 
 
+class ReturnPeriodEvent(BaseModel):
+    """Exceedance of a return-period flood threshold across the ensemble.
+
+    Paper-aligned (Nearing et al., Nature 627, 2024): flood skill is framed by
+    return period (1/2/5/10-year events) rather than raw depth, because rarer
+    events are both more impactful and harder to predict. ``exceedance_probability``
+    is the fraction of ensemble members whose peak depth crosses this event's
+    threshold — a deterministic consensus, computed without the LLM.
+    """
+
+    return_period_years: int = Field(..., description="Return period, e.g. 1, 2, 5, 10")
+    threshold_depth_m: float = Field(..., ge=0, description="Peak depth (m) defining this event")
+    exceedance_probability: float = Field(
+        ..., ge=0.0, le=1.0,
+        description="Fraction of ensemble members exceeding threshold_depth_m"
+    )
+    member_count: int = Field(..., ge=0, description="Members exceeding the threshold")
+
+
+class LeadTimeSkill(BaseModel):
+    """Estimated forecast reliability at a given lead time.
+
+    Paper-aligned (Nearing et al., Nature 627, 2024): the AI model retains skill
+    out to ~5-day lead time, matching the current state of the art's *nowcasts*.
+    ``estimated_f1`` is a reference reliability (illustrative, distilled from the
+    paper — not a live measurement), so the system can express how warning skill
+    decays with how far ahead it is forecasting.
+    """
+
+    lead_time_days: int = Field(..., ge=0, description="Days ahead of the forecast issue time")
+    estimated_f1: float = Field(
+        ..., ge=0.0, le=1.0,
+        description="Reference reliability (F1) at this lead time for the headline return period"
+    )
+    skill_retention: float = Field(
+        ..., ge=0.0, le=1.0,
+        description="Fraction of nowcast (0-day) skill retained at this lead time"
+    )
+
+
 class FloodForecast(BaseModel):
     """Complete flood forecast — composite output of FloodPredictAgent.
 
@@ -182,11 +221,31 @@ class FloodForecast(BaseModel):
         default_factory=list,
         description="Per-zone disagreement breakdown for badge rendering"
     )
+    return_period_events: list[ReturnPeriodEvent] = Field(
+        default_factory=list,
+        description="Per-return-period exceedance probabilities across the ensemble "
+                    "(paper-aligned 1/2/5/10-yr framing). Deterministic — not LLM-gated."
+    )
+    max_return_period_years: int | None = Field(
+        None,
+        description="Largest return-period event the ensemble agrees on "
+                    "(>= RETURN_PERIOD_MEMBER_AGREEMENT of members). None if below 1-yr."
+    )
+    lead_time_skill: list[LeadTimeSkill] = Field(
+        default_factory=list,
+        description="Reference reliability decay across the 7-day forecast horizon "
+                    "(paper-aligned). Deterministic — not LLM-gated."
+    )
+    skillful_lead_days: int | None = Field(
+        None,
+        description="Effective warning horizon: largest lead time whose estimated "
+                    "F1 stays >= SKILLFUL_F1_THRESHOLD for the headline return period."
+    )
 
     generated_at: datetime = Field(default_factory=datetime.utcnow)
 
     # LLM interpretation
-    summary: Optional[str] = Field(
+    summary: str | None = Field(
         None,
         description="LLM-generated forecast summary grounded in actual numbers"
     )
