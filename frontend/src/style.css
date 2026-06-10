@@ -69,6 +69,48 @@ body {
     z-index: 0;
 }
 
+/* ── Area search (top-center) ───────────────────────────────────── */
+/* Uses the #id so its z-index/position beat the generic .glass-panel rule that
+   follows it in this file (equal-specificity, later-wins would otherwise override). */
+#area-search {
+    position: fixed;
+    top: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 50;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 8px 10px;
+    width: min(420px, 64vw);
+}
+#area-input {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 13px;
+    padding: 8px 12px;
+    outline: none;
+}
+#area-input:focus { border-color: var(--accent-blue, #3b82f6); }
+#area-input::placeholder { color: var(--text-secondary, #88aaaa); opacity: 0.8; }
+.area-go {
+    background: var(--accent-blue, #3b82f6);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: filter 0.15s ease;
+}
+.area-go:hover { filter: brightness(1.12); }
+.area-go:disabled { opacity: 0.5; cursor: progress; }
+
 /* ── Glassmorphism panel base ───────────────────────────────────── */
 .glass-panel {
     background: var(--glass-bg);
@@ -94,7 +136,8 @@ body {
 /* ── Phase bar (top center) ─────────────────────────────────────── */
 .phase-bar {
     position: fixed;
-    top: var(--space-md);
+    /* Sits just below the top-center area-search box so the two don't overlap. */
+    top: 66px;
     left: 50%;
     transform: translateX(-50%);
     display: flex;

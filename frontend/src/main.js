@@ -18,6 +18,7 @@ import { connect, onMessage, onConnectionChange } from './websocket.js';
 import { initCompoundPanel, renderCompoundThreat } from './panels/compound-panel.js';
 import { initActivityStream, recordChannelEvent } from './panels/activity-stream.js';
 import { initSitrep, refreshSitrep } from './panels/sitrep.js';
+import { initAreaSearch } from './panels/area-search.js';
 
 import { getMockData } from './mockData.js';
 import { showToast } from './toast.js';
@@ -73,6 +74,7 @@ async function bootstrap() {
     initCompoundPanel();
     initActivityStream();
     initSitrep();
+    initAreaSearch();
 
     // 3. Connect WebSocket for live phase/event updates + live agent stream
     connect(window.FLOODOPS_CONFIG.wsUrl);

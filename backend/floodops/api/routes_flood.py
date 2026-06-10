@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks
+from pydantic import BaseModel
 
 from floodops.api.app import get_event_bus, get_reasoner, get_state
 from floodops.models.enums import AlertLevel, FloodPhase
@@ -14,6 +15,15 @@ from floodops.models.geo import BBox, Coordinate
 from floodops.models.sentinel import AnomalyAlert
 
 router = APIRouter()
+
+
+class SimulateRequest(BaseModel):
+    """Optional target area for a simulation. Omit the body for the Bagmati demo."""
+
+    lat: float | None = None
+    lng: float | None = None
+    name: str | None = None
+    radius_deg: float = 0.25
 
 
 @router.get("/state")
@@ -60,32 +70,60 @@ async def get_agent_status() -> list[dict]:
 
 
 @router.post("/simulate")
-async def simulate_flood_event(background_tasks: BackgroundTasks) -> dict:
-    """Inject a mock flood event to trigger the full pipeline asynchronously."""
+async def simulate_flood_event(
+    background_tasks: BackgroundTasks, body: SimulateRequest | None = None
+) -> dict:
+    """Inject a mock flood event to trigger the full pipeline asynchronously.
+
+    With no body (e.g. a bare ``curl``) this runs the Bagmati/Kathmandu demo.
+    Pass ``{lat, lng, name}`` to target any area — the alert's bbox flows to the
+    agents, so real Open-Meteo weather + OSM data is gathered for that location.
+    (Flood-zone geometry and watershed topology remain Bagmati-seeded until wired
+    per-region, so other areas show real weather over demo flood shapes.)
+    """
     bus = get_event_bus()
+    body = body or SimulateRequest()
+
+    if body.lat is not None and body.lng is not None:
+        lat, lng, r = body.lat, body.lng, body.radius_deg
+        loc = Coordinate(lat=lat, lng=lng)
+        bbox = BBox(south=lat - r, west=lng - r, north=lat + r, east=lng + r)
+        area = body.name or f"{lat:.3f},{lng:.3f}"
+        watershed_id = (body.name or "custom").lower().replace(" ", "_")[:40]
+        desc = f"Gauge anomaly near {area} reading 4.2m, 3.8σ above baseline"
+    else:
+        loc = Coordinate(lat=27.7, lng=85.3)
+        bbox = BBox(south=27.5, west=85.0, north=28.0, east=85.7)
+        area = "Bagmati / Kathmandu"
+        watershed_id = "bagmati_001"
+        desc = "Bagmati River gauge at Chobar reading 4.2m, 3.8σ above 30-day baseline"
+
     alert = AnomalyAlert(
         alert_id=str(uuid.uuid4()),
         level=AlertLevel.HIGH,
         metric="water_level",
         value=4.2,
         deviation_sigma=3.8,
-        location=Coordinate(lat=27.7, lng=85.3),
-        watershed_id="bagmati_001",
-        bbox=BBox(south=27.5, west=85.0, north=28.0, east=85.7),
+        location=loc,
+        watershed_id=watershed_id,
+        bbox=bbox,
         confidence=0.87,
         agreeing_sensors=4,
         total_sensors=5,
-        description="Bagmati River gauge at Chobar reading 4.2m, 3.8σ above 30-day baseline",
+        description=desc,
         source_readings=[],
         timestamp=datetime.utcnow(),
     )
+
     # Fire and forget
     async def _emit_task():
         await bus.emit("anomaly_alerts", alert.model_dump())
 
     background_tasks.add_task(_emit_task)
 
-    return {"status": "simulation_triggered", "alert_id": alert.alert_id, "severity": "HIGH", "z_score": 3.8}
+    return {"status": "simulation_triggered", "alert_id": alert.alert_id,
+            "area": area, "watershed_id": watershed_id,
+            "center": {"lat": loc.lat, "lng": loc.lng}, "severity": "HIGH", "z_score": 3.8}
 
 
 @router.get("/compound")

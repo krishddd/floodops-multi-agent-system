@@ -15,6 +15,13 @@
     <!-- Full-viewport map canvas -->
     <div id="map-container"></div>
 
+    <!-- Area search (top-center) — type a city → recenter + run the pipeline there -->
+    <div id="area-search" class="glass-panel area-search">
+        <input type="text" id="area-input" placeholder="Search a city or place… (e.g. Kathmandu)"
+               autocomplete="off" spellcheck="false">
+        <button id="area-go" class="area-go" title="Recenter & run simulation">Run here ▸</button>
+    </div>
+
     <!-- Phase bar (top) -->
     <div id="phase-bar" class="glass-panel phase-bar">
         <div class="phase-dot active" data-phase="00">00</div>
