@@ -159,6 +159,14 @@ async def lifespan(app: FastAPI):
         await agent.initialize()
     _app_state["agents"] = agents
 
+    # v4: forecast verification loop — records every forecast and scores
+    # matured ones against GloFAS reanalysis on a crash-proof asyncio task.
+    from floodops.obs.verification import ForecastVerifier
+    verifier = ForecastVerifier(connector=openmeteo)
+    await event_bus.subscribe("flood_forecasts", verifier.record)
+    verifier.start()
+    _app_state["verifier"] = verifier
+
     # Bridge every event-bus emit to all connected WebSocket clients so the
     # frontend receives live agent output. The bus calls the hook as
     # hook(channel, payload); we wrap it as {type: channel, data: payload}.
@@ -183,6 +191,8 @@ async def lifespan(app: FastAPI):
     yield
 
     # ── Shutdown ─────────────────────────────────────────────────
+    if _app_state.get("verifier") is not None:
+        await _app_state["verifier"].stop()
     for agent in _app_state.get("agents", []):
         if hasattr(agent, "close"):
             await agent.close()

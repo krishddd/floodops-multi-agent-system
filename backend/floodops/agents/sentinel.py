@@ -73,6 +73,8 @@ class SentinelAgent(BaseAgent):
         self.gdacs = gdacs
         # Dedup of already-emitted GDACS event ids (per process).
         self._gdacs_seen: set[str] = set()
+        # v4: memoized day-of-year climatology per basin (24h, like v3 RP cache).
+        self._climatology_cache: dict[tuple[float, float], tuple[float, Any]] = {}
 
     async def initialize(self) -> None:
         """Register CRON jobs for weather, gauge, and GDACS polling."""
@@ -144,13 +146,23 @@ class SentinelAgent(BaseAgent):
         self._recent_readings = [r for r in self._recent_readings if r.timestamp > cutoff]
 
     async def _poll_gauges(self) -> None:
-        """Fetch latest USGS stream gauge data and check for anomalies / recession.
+        """Check discharge anomalies (real seasonal climatology) / recession.
 
-        STUB: In production, calls USGSConnector.get_instantaneous_values()
+        v4: when the Open-Meteo connector is wired, anomaly detection runs on
+        REAL data — the live GloFAS forecast trace scored against a day-of-year
+        climatology built from the multi-decade reanalysis. The stub generator
+        remains the fallback when no connector is present or the fetch fails.
         """
-        self._logger.info("Polling gauge data (USGS)")
+        if self.connector is not None and hasattr(
+            self.connector, "get_historical_discharge"
+        ):
+            ok = await self._poll_discharge_climatology()
+            if ok:
+                await self._check_recession()
+                return
 
-        # --- STUB: Replace with real connector call ---
+        self._logger.info("Polling gauge data (USGS stub)")
+        # --- STUB fallback (no connector / fetch failed) ---
         readings = self._generate_stub_readings("water_level_m", DataSource.USGS_GAUGES)
         # --- END STUB ---
 
@@ -175,6 +187,104 @@ class SentinelAgent(BaseAgent):
 
         # Check for flood recession
         await self._check_recession()
+
+    async def _poll_discharge_climatology(self) -> bool:
+        """Real anomaly detection: GloFAS forecast vs day-of-year climatology.
+
+        Builds (and memoizes for 24h) a seasonal discharge baseline from the
+        multi-decade reanalysis, then z-scores the live forecast trace against
+        it — "how unusual is this FOR THIS TIME OF YEAR". Deterministic, never
+        LLM-gated. Returns False when data is unavailable (caller falls back
+        to the stub path); refuses (False) below 10 years of record.
+        """
+        from floodops.hydrology.climatology import build_climatology, seasonal_zscores
+
+        lat, lng = BASIN_CENTER_LAT, BASIN_CENTER_LNG
+        key = (round(lat, 2), round(lng, 2))
+        try:
+            cached = self._climatology_cache.get(key)
+            if cached is not None and cached[0] > datetime.utcnow().timestamp():
+                clim = cached[1]
+            else:
+                hist = await self.connector.get_historical_discharge(lat, lng)
+                if not hist:
+                    return False
+                clim = build_climatology(hist.get("time", []), hist.get("discharge", []))
+                self._climatology_cache[key] = (
+                    datetime.utcnow().timestamp() + 86400, clim
+                )
+            if clim is None:
+                return False
+
+            forecast = await self.connector.get_discharge_ensemble(lat, lng)
+            if not forecast:
+                return False
+            scored = seasonal_zscores(
+                forecast.get("time", []), forecast.get("mean", []), clim
+            )
+            if not scored:
+                return False
+        except Exception as exc:
+            self._logger.warning("climatology anomaly poll failed: %s", exc)
+            return False
+
+        # Track today's discharge for recession detection.
+        today_value = scored[0][1]
+        hist_key = "glofas_basin_gauge"
+        self._gauge_history.setdefault(hist_key, []).append(
+            (datetime.utcnow(), today_value)
+        )
+        cutoff = datetime.utcnow() - timedelta(hours=24)
+        self._gauge_history[hist_key] = [
+            (t, v) for t, v in self._gauge_history[hist_key] if t > cutoff
+        ]
+
+        # Headline anomaly = the most seasonally-unusual day in the 7-day window.
+        window = scored[:7]
+        peak_date, peak_value, peak_z = max(window, key=lambda s: s[2])
+        level: AlertLevel | None = None
+        if peak_z >= ANOMALY_THRESHOLDS["CRITICAL"]:
+            level = AlertLevel.CRITICAL
+        elif peak_z >= ANOMALY_THRESHOLDS["HIGH"]:
+            level = AlertLevel.HIGH
+        elif peak_z >= ANOMALY_THRESHOLDS["MEDIUM"]:
+            level = AlertLevel.MEDIUM
+        elif peak_z >= ANOMALY_THRESHOLDS["LOW"]:
+            level = AlertLevel.LOW
+        if level is None:
+            self._logger.info(
+                "climatology check: max seasonal z=%.2f (quiet)", peak_z
+            )
+            return True
+
+        alert = AnomalyAlert(
+            alert_id=str(uuid.uuid4()),
+            level=level,
+            metric="discharge_seasonal_anomaly",
+            value=round(peak_value, 1),
+            deviation_sigma=round(peak_z, 2),
+            location=Coordinate(lat=lat, lng=lng),
+            watershed_id="basin_default",
+            bbox=BBox(
+                south=lat - BASIN_BBOX_HALF_DEG, west=lng - BASIN_BBOX_HALF_DEG,
+                north=lat + BASIN_BBOX_HALF_DEG, east=lng + BASIN_BBOX_HALF_DEG,
+            ),
+            confidence=round(min(0.95, max(0.3, peak_z / 5.0)), 2),
+            agreeing_sensors=1,
+            total_sensors=1,
+            source_readings=[],
+            timestamp=datetime.utcnow(),
+        )
+        await self.event_bus.emit("anomaly_alerts", alert.model_dump())
+        self.log_action(
+            "emit_climatology_anomaly",
+            f"GloFAS forecast {peak_value:.0f} m³/s on {peak_date} is "
+            f"{peak_z:.1f}σ above the day-of-year climatology "
+            f"(multi-decade reanalysis baseline)",
+            alert.confidence,
+            data_sources=["OPENMETEO_GLOFAS:daily"],
+        )
+        return True
 
     async def _poll_gdacs(self) -> None:
         """Cross-validate against GDACS global flood alerts (v4, keyless).

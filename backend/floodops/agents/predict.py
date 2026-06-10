@@ -122,7 +122,17 @@ class FloodPredictAgent(BaseAgent):
         # lands against them. Reference only — never an input to our ensemble.
         bench_thresholds, bench_peak, bench_rp = await self._benchmark_return_period(bbox)
 
-        ensemble_members = self._generate_mock_ensemble(bbox, 50, intensity=intensity)
+        # v4: physically-motivated ensemble — members route REAL perturbed
+        # precipitation through a linear reservoir, with depth scaled by the
+        # basin's fitted return-period thresholds. Mock kept as fallback.
+        ensemble_members = None
+        if bench_thresholds:
+            ensemble_members = await self._generate_runoff_ensemble(
+                bbox, 50, bench_thresholds
+            )
+        ensemble_source = "runoff-routed" if ensemble_members else "statistical-mock"
+        if ensemble_members is None:
+            ensemble_members = self._generate_mock_ensemble(bbox, 50, intensity=intensity)
         representative_ids = self._select_representatives(ensemble_members, k=10)
 
         # Aggregate into probability map
@@ -183,13 +193,14 @@ class FloodPredictAgent(BaseAgent):
             f" Headline event: ~{max_rp}-yr return period."
             if max_rp is not None else " Below 1-yr return-period threshold."
         )
-        if bench_thresholds is not None:
+        if bench_thresholds is not None and bench_peak is not None:
             bench_label = f"~{bench_rp}-yr" if bench_rp is not None else "sub-1-yr"
             rp_clause += (
                 f" GloFAS benchmark: peak {bench_peak:.0f} m³/s → {bench_label} event "
                 f"(thresholds fit from {len(bench_thresholds)} return periods, "
                 f"1984→present reanalysis)."
             )
+        rp_clause += f" Ensemble: {ensemble_source}."
         if skillful_days is not None:
             rp_clause += f" Skillful warning horizon: {skillful_days} days."
         summary = (
@@ -346,6 +357,98 @@ class FloodPredictAgent(BaseAgent):
         lat = loc.get("lat", 27.7)
         lng = loc.get("lng", 85.3)
         return BBox(south=lat - 0.5, west=lng - 0.5, north=lat + 0.5, east=lng + 0.5)
+
+    async def _generate_runoff_ensemble(
+        self, bbox: BBox, n_members: int, discharge_thresholds: dict[int, float]
+    ) -> list[EnsembleMember] | None:
+        """Members that physically follow real rainfall (v4, see hydrology/runoff).
+
+        Each member perturbs the real Open-Meteo daily precipitation
+        (member-seeded uniform factor), routes it through a delayed linear
+        reservoir, and converts its peak discharge to depth via the basin's
+        fitted return-period scale. Deterministic given the forcing —
+        uncalibrated physics, honestly labelled. Returns None when the
+        forcing is unavailable (caller falls back to the statistical mock).
+        """
+        from floodops.config import (
+            BASIN_EFFECTIVE_AREA_KM2,
+            ENSEMBLE_SPREAD,
+            RUNOFF_RECESSION_K,
+        )
+        from floodops.hydrology.runoff import (
+            discharge_to_depth,
+            perturb_precip,
+            route_linear_reservoir,
+            time_to_peak_hours,
+        )
+
+        if self.connector is None:
+            return None
+        try:
+            c = bbox.center()
+            rain = await self.connector.get_rainfall(c.lat, c.lng)
+            series = (rain or {}).get("series") or []
+            if len(series) < 24:
+                return None
+            # Hourly → daily totals (7 forecast days max).
+            daily = [round(sum(series[d * 24:(d + 1) * 24]), 2)
+                     for d in range(min(7, len(series) // 24))]
+        except Exception as exc:
+            self._logger.warning("runoff forcing fetch failed: %s", exc)
+            return None
+        if not daily:
+            return None
+
+        # Effective catchment area comes from config, NOT the alert bbox — the
+        # bbox (~11,000 km² at 1°) is alert geometry; the GloFAS-cell thresholds
+        # describe the actual river catchment (config default ≈ upper Bagmati).
+        area_km2 = BASIN_EFFECTIVE_AREA_KM2
+        tp_h = time_to_peak_hours(area_km2)
+
+        import random
+        center_lat = (bbox.south + bbox.north) / 2
+        center_lng = (bbox.west + bbox.east) / 2
+        now = datetime.utcnow()
+        members: list[EnsembleMember] = []
+        for i in range(n_members):
+            perturbed = perturb_precip(daily, i, spread=ENSEMBLE_SPREAD)
+            trace = route_linear_reservoir(
+                perturbed, area_km2, recession_k=RUNOFF_RECESSION_K
+            )
+            peak_q = max(trace) if trace else 0.0
+            peak_day = trace.index(peak_q) if trace else 0
+            depth = max(0.05, discharge_to_depth(peak_q, discharge_thresholds))
+
+            if depth > 3.0:
+                category = "catastrophic"
+            elif depth > 1.0:
+                category = "severe"
+            elif depth > 0.5:
+                category = "moderate"
+            else:
+                category = "minimal"
+
+            rng = random.Random(i)
+            offset = rng.gauss(0, 0.02 * (i % 5 + 1))
+            front_coords = [
+                [center_lng - 0.3 + offset, center_lat - 0.2 + offset * 0.5],
+                [center_lng - 0.1 + offset * 0.7, center_lat + 0.1 - offset * 0.3],
+                [center_lng + 0.2 + offset * 1.2, center_lat + 0.15 + offset * 0.8],
+                [center_lng + 0.4 + offset * 0.5, center_lat - 0.05 + offset * 0.2],
+            ]
+            members.append(EnsembleMember(
+                member_id=i,
+                flood_front=GeoJsonGeometry(type="LineString", coordinates=front_coords),
+                peak_depth_m=round(depth, 2),
+                peak_time=now + timedelta(hours=peak_day * 24 + tp_h),
+                flood_extent_km2=round(max(0.0, depth * 15 + rng.gauss(0, 5)), 1),
+                outcome_category=category,
+            ))
+        self._logger.info(
+            "runoff ensemble: %d members from %d-day real forcing "
+            "(area %.0f km², tp %.1f h)", n_members, len(daily), area_km2, tp_h,
+        )
+        return members
 
     def _generate_mock_ensemble(
         self, bbox: BBox, n_members: int, intensity: float = 1.0

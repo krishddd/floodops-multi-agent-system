@@ -144,6 +144,22 @@ BASIN_CENTER_LAT: float = float(os.getenv("BASIN_CENTER_LAT", "27.7"))
 BASIN_CENTER_LNG: float = float(os.getenv("BASIN_CENTER_LNG", "85.3"))
 BASIN_BBOX_HALF_DEG: float = float(os.getenv("BASIN_BBOX_HALF_DEG", "1.0"))
 
+# v4 — physically-motivated runoff ensemble (uncalibrated defaults, see
+# hydrology/runoff.py): member precip perturbation spread and the linear-
+# reservoir recession coefficient.
+ENSEMBLE_SPREAD: float = float(os.getenv("ENSEMBLE_SPREAD", "0.20"))
+RUNOFF_RECESSION_K: float = float(os.getenv("RUNOFF_RECESSION_K", "0.3"))
+# Effective hydrological catchment area (km²) used for runoff routing — NOT the
+# alert bbox. Default ≈ the upper Bagmati at Chobar (~585 km², demo basin);
+# set per deployment. The bbox is for alert geometry only: using its area
+# (~11,000 km² at 1°) would overstate discharge by ~20× against the GloFAS
+# cell the return-period thresholds are fitted to.
+BASIN_EFFECTIVE_AREA_KM2: float = float(os.getenv("BASIN_EFFECTIVE_AREA_KM2", "585"))
+
+# v4 — forecast verification loop (paper's ±2-day exceedance-hit rule).
+VERIFICATION_JOB_INTERVAL_S: float = float(os.getenv("VERIFICATION_JOB_INTERVAL_S", "3600"))
+VERIFICATION_MIN_SAMPLES: int = int(os.getenv("VERIFICATION_MIN_SAMPLES", "20"))
+
 # Watershed flow topology for causal-graph reasoning (v2). Config-driven adjacency
 # (upstream -> downstream), keyed by region id, configurable per-region. This is
 # the SOLE source of topology — change DEFAULT_WATERSHED_REGION (or add a region)
