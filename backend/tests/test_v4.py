@@ -320,6 +320,10 @@ def test_cap_xml_well_formed_and_escapes_hostile_input():
     assert root.tag.endswith("alert")
     assert "<script>" not in xml         # escaped, not raw
     assert "Extreme" in xml and "Immediate" in xml
+    # CAP requires an ISO, timezone-qualified <sent> (T separator, +00:00).
+    import re
+    sent = root.find(f"{{{root.tag.split('}')[0][1:]}}}sent").text
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00", sent)
 
 
 def test_cap_xml_never_raises_on_dirty_input():

@@ -58,10 +58,12 @@ def to_cap_xml(dispatch: dict[str, Any], sender: str = "floodops@demo") -> str:
     _add(alert, "identifier", _capped(dispatch.get("dispatch_id")
                                       or dispatch.get("alert_id") or "unknown"))
     _add(alert, "sender", _capped(sender, 128))
-    sent = dispatch.get("timestamp") or datetime.utcnow().isoformat()
-    # CAP requires a timezone-qualified datetime.
-    sent_str = str(sent)[:19] + ("+00:00" if "T" in str(sent) else "")
-    _add(alert, "sent", sent_str or datetime.utcnow().isoformat() + "+00:00")
+    sent = str(dispatch.get("timestamp") or datetime.utcnow().isoformat())
+    # CAP requires an ISO datetime with timezone: YYYY-MM-DDThh:mm:ss+00:00.
+    sent_str = sent[:19].replace(" ", "T")
+    if len(sent_str) < 19:
+        sent_str = datetime.utcnow().isoformat()[:19]
+    _add(alert, "sent", sent_str + "+00:00")
     _add(alert, "status", "Actual" if severity_key in ("WARNING", "EMERGENCY")
          else "Exercise")
     _add(alert, "msgType", "Alert")
