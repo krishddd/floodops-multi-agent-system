@@ -40,6 +40,54 @@ variant with `docker compose build --build-arg INCLUDE_ML=true backend`.
 
 ---
 
+## v4 — Multi-model AI fleet, live hazard feeds, real ML, agency-ready ops
+
+Reference standard: Nearing et al., *Global prediction of extreme floods in
+ungauged watersheds*, Nature 627, 559–563 (2024), DOI 10.1038/s41586-024-07145-1
+(local copy `global_flood_prediction_nature_2024.md`). All geo ops are WGS84.
+
+- **Multi-model LLM fleet:** `github` provider (GitHub Models,
+  `GITHUB_MODELS_TOKEN`, default `openai/gpt-4.1-mini`); module-level
+  **429-cooldown guard** (`CooldownProvider`, `LLM_RATE_LIMIT_COOLDOWN_S`,
+  event-loop-only state — single Uvicorn worker for the LLM fleet);
+  **heterogeneous `_ensemble_vote`** round-robins N runs across
+  `LLM_ENSEMBLE_PROVIDERS` with pinned aggregation (median floats, plurality
+  Enum/Literal, free text whole from the median-confidence run, ties → lower
+  pool index); `FloodLLMClient` chains primary → extras on cooldown (loud,
+  never silent-Null); per-agent routing in the lifespan (Groq fast lane =
+  sentinel, GitHub deep lane = compound/urban). **Tier honesty:** Groq/GitHub
+  free tiers are demo/eval — agency deployment swaps paid endpoints by config.
+- **Live hazard connectors:** `connectors/gdacs.py` (keyless GeoJSON flood
+  events, Green/Orange/Red severity map; research-use ToS — agencies need a
+  data agreement). Sentinel polls it on CRON → `external_hazards` channel
+  (fused by CompoundEventAgent as `regional_flood_alert`) + an anomaly boost
+  when an Orange/Red event bbox intersects the basin bbox (rect approximation,
+  `BASIN_BBOX_HALF_DEG`). `connectors/reliefweb.py` (v2 API, needs a free
+  registered `RELIEFWEB_APPNAME`; payloads carry `report_lag_days` and are
+  labelled retrospective-only) → DiseaseRiskAgent LLM context.
+- **Real ML in agents:** `hydrology/climatology.py` — day-of-year discharge
+  baselines (±15-day pooling over the multi-decade reanalysis, 24h memo);
+  sentinel scores the live GloFAS forecast as **seasonal z-scores** (stub
+  fallback kept). `hydrology/runoff.py` — member-seeded `Uniform(1±0.20)`
+  precip perturbation routed through a delayed linear reservoir
+  (`tp = 0.5·sqrt(area)`, `RUNOFF_RECESSION_K`); depth via the basin's fitted
+  return-period scale; catchment area from `BASIN_EFFECTIVE_AREA_KM2` (≈585,
+  upper Bagmati — NOT the bbox, which would overstate ~20×). *Physically
+  motivated, uncalibrated — calibration is v5.* `obs/verification.py` — crash-
+  proof asyncio loop (lifespan task, `VERIFICATION_JOB_INTERVAL_S`) scoring
+  matured forecasts with the paper's **±2-day exceedance-hit rule**; serves
+  measured P/R/F1 per return period, cold-start prior below
+  `VERIFICATION_MIN_SAMPLES`.
+- **Agency ops:** `obs/store.py` — WAL SQLite via `asyncio.to_thread`
+  (forecasts/alerts/audit/verification_samples; **single-node/eval — production
+  = PostgreSQL**, schema kept portable). `models/cap.py` — **CAP 1.2 XML**
+  export (`GET /api/v1/alerts/{id}/cap.xml`), ElementTree-built (auto-escaped,
+  external strings length-capped). Optional **API auth**: `FLOODOPS_API_KEY` →
+  `X-API-Key` on `/api/v1/*`, `?api_key=` on the WS upgrade (1008 on mismatch).
+  Routes: `/api/v1/verification/skill` (cold-start contract: 200 + prior),
+  `/api/v1/basin/thresholds`, `/api/v1/hazards/gdacs`. Rate limiting, full
+  AuthN/Z, HA: documented out-of-scope. Tests: `tests/test_v4.py`.
+
 ## v3 — Real flood-frequency analysis + free-tier LLM providers
 
 - **Per-basin return-period thresholds (paper-faithful, keyless):**
