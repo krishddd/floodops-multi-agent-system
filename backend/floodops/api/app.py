@@ -134,6 +134,7 @@ async def lifespan(app: FastAPI):
     # Injected into the agents that consume them; everything degrades to mock
     # generation when a source is unreachable.
     from floodops.connectors.gdacs import GDACSConnector
+    from floodops.connectors.googleflood import GoogleFloodConnector
     from floodops.connectors.openmeteo import OpenMeteoConnector
     from floodops.connectors.osm import OSMConnector
     from floodops.connectors.reliefweb import ReliefWebConnector
@@ -141,12 +142,16 @@ async def lifespan(app: FastAPI):
     osm = OSMConnector()
     gdacs = GDACSConnector()
     reliefweb = ReliefWebConnector()
+    # v5: the operational Nature-2024 model API — activates when
+    # GOOGLE_FLOOD_API_KEY is set; reports honestly as unavailable until then.
+    googleflood = GoogleFloodConnector()
     _app_state["connectors"] = {"openmeteo": openmeteo, "osm": osm,
-                                "gdacs": gdacs, "reliefweb": reliefweb}
+                                "gdacs": gdacs, "reliefweb": reliefweb,
+                                "googleflood": googleflood}
 
     agents = [
         SentinelAgent(event_bus=event_bus, llm=fast_client, connector=openmeteo,
-                      gdacs=gdacs),
+                      gdacs=gdacs, googleflood=googleflood),
         GLOFAgent(event_bus=event_bus, llm=llm_client),
         FloodPredictAgent(event_bus=event_bus, llm=llm_client, connector=openmeteo),
         UrbanRiskAgent(event_bus=event_bus, llm=deep_client, connector=osm),

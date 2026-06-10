@@ -18,6 +18,7 @@ import { connect, onMessage, onConnectionChange } from './websocket.js';
 import { initCompoundPanel, renderCompoundThreat } from './panels/compound-panel.js';
 import { initActivityStream, recordChannelEvent } from './panels/activity-stream.js';
 import { initSitrep, refreshSitrep } from './panels/sitrep.js';
+import { initSkillPanel } from './panels/skill-panel.js';
 import { initAreaSearch } from './panels/area-search.js';
 
 import { getMockData } from './mockData.js';
@@ -74,6 +75,7 @@ async function bootstrap() {
     initCompoundPanel();
     initActivityStream();
     initSitrep();
+    initSkillPanel();
     initAreaSearch();
 
     // 3. Connect WebSocket for live phase/event updates + live agent stream

@@ -99,6 +99,7 @@ class DataSource(StrEnum):
     DARTMOUTH = "DARTMOUTH"               # ⚪ event-based archive
     GDACS = "GDACS"                       # 🟢 continuous global alerts (v4)
     RELIEFWEB = "RELIEFWEB"               # 🟡 daily, days-old reports (v4)
+    GOOGLE_FLOOD = "GOOGLE_FLOOD"         # 🔑 several/day, key-gated (v5)
 
 
 class ConnectorStatus(StrEnum):

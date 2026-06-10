@@ -38,6 +38,7 @@ class OpenMeteoConnector(BaseConnector):
 
     FORECAST_BASE = "https://api.open-meteo.com/v1/forecast"
     FLOOD_BASE = "https://flood-api.open-meteo.com/v1/flood"
+    ARCHIVE_BASE = "https://archive-api.open-meteo.com/v1/archive"
 
     def __init__(self, **kwargs: Any) -> None:
         # Hourly data → 15-min cache is plenty; default to 900s per the plan.
@@ -180,6 +181,44 @@ class OpenMeteoConnector(BaseConnector):
             # Long-lived manual cache entry (base TTL is 900s; this is daily
             # data): shift the stored timestamp forward so the standard TTL
             # check keeps it for ~24h.
+            self._cache[cache_key] = (time.time() + 86400 - self._cache_ttl, result)
+            return result
+        except Exception:
+            return None
+
+    async def get_historical_precipitation(
+        self, lat: float, lng: float, start_year: int = 2005
+    ) -> dict | None:
+        """Multi-year daily precipitation reanalysis (keyless archive API).
+
+        v5: paired with ``get_historical_discharge`` to calibrate the runoff
+        model's scale per basin (hydrology/calibration.py). Reference data —
+        never a live forecast input. Cached ~24h like the discharge record.
+        Returns None on failure.
+        """
+        from datetime import date, timedelta
+
+        end = date.today() - timedelta(days=7)  # archive lags realtime
+        cache_key = self._cache_key("hist_precip", round(lat, 2), round(lng, 2),
+                                    start_year, end.isoformat())
+        cached = self._get_cached(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            data = await self.fetch_with_retry(
+                self.ARCHIVE_BASE,
+                params={
+                    "latitude": lat, "longitude": lng,
+                    "daily": "precipitation_sum",
+                    "start_date": f"{start_year}-01-01",
+                    "end_date": end.isoformat(),
+                },
+            )
+            daily = data.get("daily", {})
+            result = {
+                "time": daily.get("time", []),
+                "precipitation": daily.get("precipitation_sum", []),
+            }
             self._cache[cache_key] = (time.time() + 86400 - self._cache_ttl, result)
             return result
         except Exception:

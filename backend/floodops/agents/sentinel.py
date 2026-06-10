@@ -61,7 +61,7 @@ class SentinelAgent(BaseAgent):
     trigger_types: set[TriggerType] = {TriggerType.CRON}
 
     def __init__(self, event_bus: EventBus, llm=None, connector=None,
-                 gdacs=None) -> None:
+                 gdacs=None, googleflood=None) -> None:
         super().__init__(event_bus, llm, connector)
         # Baselines keyed by (watershed_id, metric)
         self._baselines: dict[tuple[str, str], Baseline] = {}
@@ -75,6 +75,10 @@ class SentinelAgent(BaseAgent):
         self._gdacs_seen: set[str] = set()
         # v4: memoized day-of-year climatology per basin (24h, like v3 RP cache).
         self._climatology_cache: dict[tuple[float, float], tuple[float, Any]] = {}
+        # v5: optional Google Flood Forecasting connector (the Nature-2024
+        # model's operational API) + dedup of already-boosted statuses.
+        self.googleflood = googleflood
+        self._gfh_seen: set[str] = set()
 
     async def initialize(self) -> None:
         """Register CRON jobs for weather, gauge, and GDACS polling."""
@@ -93,6 +97,12 @@ class SentinelAgent(BaseAgent):
                 CRON_SENTINEL_WEATHER,
                 self._poll_gdacs,
                 job_id="sentinel_gdacs",
+            )
+        if self.googleflood is not None and getattr(self.googleflood, "available", False):
+            await self.event_bus.register_cron(
+                CRON_SENTINEL_WEATHER,
+                self._poll_googleflood,
+                job_id="sentinel_googleflood",
             )
         self._logger.info("SentinelAgent initialised with CRON polling")
 
@@ -358,6 +368,79 @@ class SentinelAgent(BaseAgent):
                     "independent confirmation boost",
                     0.9,
                     data_sources=["GDACS:continuous"],
+                )
+
+    async def _poll_googleflood(self) -> None:
+        """Cross-validate against the Google Flood Forecasting API (v5).
+
+        This is the *operational Nature-2024 LSTM model* — gauge-level AI
+        forecasts. Deterministic outputs (never LLM-gated): every status →
+        ``external_hazards`` for compound fusion; a SEVERE/EXTREME status in
+        the basin bbox → an anomaly boost (independent AI-model confirmation).
+        Statuses are deduped per (gauge, issued_time).
+        """
+        if self.googleflood is None:
+            return
+        basin_bbox = BBox(
+            south=BASIN_CENTER_LAT - BASIN_BBOX_HALF_DEG,
+            west=BASIN_CENTER_LNG - BASIN_BBOX_HALF_DEG,
+            north=BASIN_CENTER_LAT + BASIN_BBOX_HALF_DEG,
+            east=BASIN_CENTER_LNG + BASIN_BBOX_HALF_DEG,
+        )
+        try:
+            statuses = await self.googleflood.get_flood_status(basin_bbox)
+        except Exception as exc:
+            self._logger.warning("Google Flood poll failed: %s", exc)
+            return
+        if not statuses:
+            return
+
+        for status in statuses:
+            dedup = f"{status.get('gauge_id')}@{status.get('issued_time')}"
+            if dedup in self._gfh_seen:
+                continue
+            self._gfh_seen.add(dedup)
+            await self.event_bus.emit("external_hazards", {
+                "source": "GOOGLE_FLOOD",
+                "event_id": dedup,
+                "name": f"Gauge {status.get('gauge_id')} {status.get('severity')}",
+                "alert_level": status.get("severity", "UNKNOWN").lower(),
+                "severity": float(status.get("severity_weight", 0.0)),
+                "forecast_trend": status.get("forecast_trend"),
+                "bbox": basin_bbox.model_dump(),
+                "report_url": "https://g.co/floodhub",
+            })
+
+            if status.get("severity") in ("SEVERE", "EXTREME"):
+                level = (AlertLevel.CRITICAL if status["severity"] == "EXTREME"
+                         else AlertLevel.HIGH)
+                alert = AnomalyAlert(
+                    alert_id=str(uuid.uuid4()),
+                    level=level,
+                    metric="ai_model_flood_forecast",
+                    value=float(status.get("severity_weight", 0.8)),
+                    deviation_sigma=ANOMALY_THRESHOLDS[level.value],
+                    location=Coordinate(
+                        lat=status.get("lat") or BASIN_CENTER_LAT,
+                        lng=status.get("lng") or BASIN_CENTER_LNG,
+                    ),
+                    watershed_id="basin_default",
+                    bbox=basin_bbox,
+                    confidence=0.95 if status.get("quality_verified") else 0.75,
+                    agreeing_sensors=1,
+                    total_sensors=1,
+                    source_readings=[],
+                    timestamp=datetime.utcnow(),
+                )
+                await self.event_bus.emit("anomaly_alerts", alert.model_dump())
+                self.log_action(
+                    "emit_googleflood_confirmation",
+                    f"Google Flood Forecasting gauge {status.get('gauge_id')} "
+                    f"reports {status['severity']} (trend "
+                    f"{status.get('forecast_trend')}) — Nature-2024 AI model "
+                    "independent confirmation",
+                    alert.confidence,
+                    data_sources=["GOOGLE_FLOOD:several/day"],
                 )
 
     # ── Anomaly detection ────────────────────────────────────────────

@@ -40,6 +40,28 @@ variant with `docker compose build --build-arg INCLUDE_ML=true backend`.
 
 ---
 
+## v5 — Google Flood Forecasting connector, runoff calibration, skill panel
+
+- **Google Flood Forecasting API** (`connectors/googleflood.py`, 🔑 key-gated):
+  the operational Nature-2024 LSTM model (floodforecasting.googleapis.com,
+  free/CC BY 4.0, waitlist → `GOOGLE_FLOOD_API_KEY`). Sentinel polls it when
+  keyed: every status → `external_hazards`; SEVERE/EXTREME in the basin bbox →
+  anomaly boost (`ai_model_flood_forecast`, confidence 0.95 quality-verified /
+  0.75 otherwise, deduped per gauge+issued_time). Route
+  `/api/v1/hazards/googleflood` serves an honest `available: false` until keyed.
+- **Runoff calibration** (`hydrology/calibration.py`, keyless): pairs the
+  Open-Meteo archive precipitation reanalysis
+  (`OpenMeteoConnector.get_historical_precipitation`) with the GloFAS
+  discharge record; routes each historical year through the SAME linear
+  reservoir and fits `scale = median(observed/routed annual max)` (refused
+  <10 paired years or outside [0.01, 100]). Predict memoizes it 24h and
+  scales member peaks before depth conversion (Bagmati live fit: scale 0.575
+  over 21 years). *Magnitude bias-correction only — joint k/coefficient
+  estimation is v6.* Tests: `tests/test_v5.py`.
+- **Forecast Skill & Benchmark panel** (`frontend/src/panels/skill-panel.js`):
+  renders `/verification/skill` + `/basin/thresholds` with an honest
+  MEASURED vs COLD-START PRIOR badge; sends `X-API-Key` when configured.
+
 ## v4 — Multi-model AI fleet, live hazard feeds, real ML, agency-ready ops
 
 Reference standard: Nearing et al., *Global prediction of extreme floods in

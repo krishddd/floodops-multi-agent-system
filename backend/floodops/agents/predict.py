@@ -64,6 +64,10 @@ class FloodPredictAgent(BaseAgent):
         self._rp_threshold_cache: dict[
             tuple[float, float], tuple[float, dict[int, float] | None]
         ] = {}
+        # v5: per-basin runoff calibration: (lat, lng) → (expiry, result|None).
+        self._calibration_cache: dict[
+            tuple[float, float], tuple[float, dict | None]
+        ] = {}
 
     async def initialize(self) -> None:
         """Subscribe to anomaly_alerts and glof_alerts queues."""
@@ -358,6 +362,45 @@ class FloodPredictAgent(BaseAgent):
         lng = loc.get("lng", 85.3)
         return BBox(south=lat - 0.5, west=lng - 0.5, north=lat + 0.5, east=lng + 0.5)
 
+    async def _runoff_calibration(self, lat: float, lng: float,
+                                  area_km2: float) -> dict | None:
+        """Per-basin runoff scale calibration (v5), memoized for 24h.
+
+        Pairs the keyless archive-precipitation and GloFAS-discharge
+        reanalyses through hydrology/calibration.py. None (uncalibrated) when
+        either record is unavailable or too short — never faked.
+        """
+        from floodops.config import RUNOFF_RECESSION_K
+        from floodops.hydrology.calibration import calibrate_runoff_scale
+
+        key = (round(lat, 2), round(lng, 2))
+        cached = self._calibration_cache.get(key)
+        if cached is not None and cached[0] > datetime.utcnow().timestamp():
+            return cached[1]
+        result: dict | None = None
+        try:
+            if hasattr(self.connector, "get_historical_precipitation"):
+                precip = await self.connector.get_historical_precipitation(lat, lng)
+                hist = await self.connector.get_historical_discharge(lat, lng)
+                if precip and hist:
+                    result = calibrate_runoff_scale(
+                        precip.get("time", []), precip.get("precipitation", []),
+                        hist.get("time", []), hist.get("discharge", []),
+                        area_km2, recession_k=RUNOFF_RECESSION_K,
+                    )
+        except Exception as exc:
+            self._logger.warning("runoff calibration failed: %s", exc)
+        self._calibration_cache[key] = (
+            datetime.utcnow().timestamp() + 86400, result
+        )
+        if result:
+            self._logger.info(
+                "runoff calibrated: scale=%.3f over %d paired years "
+                "(IQR %.3f–%.3f)", result["scale"], result["paired_years"],
+                result["ratio_p25"], result["ratio_p75"],
+            )
+        return result
+
     async def _generate_runoff_ensemble(
         self, bbox: BBox, n_members: int, discharge_thresholds: dict[int, float]
     ) -> list[EnsembleMember] | None:
@@ -405,6 +448,11 @@ class FloodPredictAgent(BaseAgent):
         area_km2 = BASIN_EFFECTIVE_AREA_KM2
         tp_h = time_to_peak_hours(area_km2)
 
+        # v5: per-basin magnitude calibration against the reanalysis (None →
+        # uncalibrated v4 behaviour, honestly labelled in the log).
+        calibration = await self._runoff_calibration(c.lat, c.lng, area_km2)
+        scale = float(calibration["scale"]) if calibration else 1.0
+
         import random
         center_lat = (bbox.south + bbox.north) / 2
         center_lng = (bbox.west + bbox.east) / 2
@@ -415,8 +463,8 @@ class FloodPredictAgent(BaseAgent):
             trace = route_linear_reservoir(
                 perturbed, area_km2, recession_k=RUNOFF_RECESSION_K
             )
-            peak_q = max(trace) if trace else 0.0
-            peak_day = trace.index(peak_q) if trace else 0
+            peak_q = (max(trace) if trace else 0.0) * scale
+            peak_day = trace.index(max(trace)) if trace else 0
             depth = max(0.05, discharge_to_depth(peak_q, discharge_thresholds))
 
             if depth > 3.0:
@@ -446,7 +494,10 @@ class FloodPredictAgent(BaseAgent):
             ))
         self._logger.info(
             "runoff ensemble: %d members from %d-day real forcing "
-            "(area %.0f km², tp %.1f h)", n_members, len(daily), area_km2, tp_h,
+            "(area %.0f km², tp %.1f h, %s)", n_members, len(daily), area_km2,
+            tp_h,
+            (f"calibrated scale {scale:.3f}" if calibration
+             else "UNCALIBRATED scale 1.0"),
         )
         return members
 

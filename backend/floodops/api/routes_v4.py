@@ -85,6 +85,35 @@ async def gdacs_events() -> dict[str, Any]:
             "attribution": "GDACS (EC JRC / UN OCHA) — research use"}
 
 
+@router.get("/hazards/googleflood")
+async def googleflood_status() -> dict[str, Any]:
+    """Latest Google Flood Forecasting statuses for the basin (v5, key-gated).
+
+    The operational Nature-2024 model API. Serves an honest ``available:
+    false`` payload until GOOGLE_FLOOD_API_KEY is configured.
+    """
+    from floodops.models.geo import BBox
+
+    conn = _state().get("connectors", {}).get("googleflood")
+    if conn is None or not getattr(conn, "available", False):
+        return {"available": False, "statuses": [],
+                "note": ("set GOOGLE_FLOOD_API_KEY (waitlist: "
+                         "support.google.com/flood-hub/answer/16364306)")}
+    from floodops.config import BASIN_BBOX_HALF_DEG
+
+    bbox = BBox(
+        south=BASIN_CENTER_LAT - BASIN_BBOX_HALF_DEG,
+        west=BASIN_CENTER_LNG - BASIN_BBOX_HALF_DEG,
+        north=BASIN_CENTER_LAT + BASIN_BBOX_HALF_DEG,
+        east=BASIN_CENTER_LNG + BASIN_BBOX_HALF_DEG,
+    )
+    statuses = await conn.get_flood_status(bbox)
+    return {"available": True, "statuses": statuses or [],
+            "live": statuses is not None,
+            "attribution": ("Google Flood Forecasting API, CC BY 4.0 "
+                            "(Nearing et al. 2024)")}
+
+
 @router.get("/alerts/{alert_id}/cap.xml")
 async def alert_cap_xml(alert_id: str) -> Response:
     """A dispatched alert rendered as CAP 1.2 XML (agency dissemination)."""
