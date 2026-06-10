@@ -57,6 +57,34 @@ class DiseaseRiskAgent(BaseAgent):
                 assessment.confidence,
             )
 
+    async def _humanitarian_context(self) -> dict[str, Any] | None:
+        """ReliefWeb humanitarian reports (v4) — retrospective LLM context only.
+
+        Reports lag events by days (each carries ``report_lag_days``), so this
+        is labelled background context and never influences the deterministic
+        risk scores. Returns None when no connector is wired or the fetch
+        fails — the assessment proceeds without it.
+        """
+        if self.connector is None or not hasattr(self.connector, "get_flood_reports"):
+            return None
+        try:
+            reports = await self.connector.get_flood_reports(
+                "flood disease outbreak", limit=3
+            )
+        except Exception as exc:
+            self._logger.warning("ReliefWeb fetch failed: %s", exc)
+            return None
+        if not reports:
+            return None
+        return {
+            "humanitarian_reports": [
+                {"title": r.get("title"), "report_lag_days": r.get("report_lag_days")}
+                for r in reports
+            ],
+            "note": ("retrospective humanitarian context (days-old), "
+                     "NOT a real-time signal — weight as background only"),
+        }
+
     async def _assess_outbreak(self, report, event_data: dict[str, Any]) -> ReasonedAssessment:
         """3-run ensemble consensus on the dominant-pathogen outbreak risk.
 
@@ -85,7 +113,7 @@ class DiseaseRiskAgent(BaseAgent):
                      "exposed": h.population_exposed} for h in report.hotspots
                 ],
             },
-            context=None,
+            context=await self._humanitarian_context(),
             schema=ReasonedAssessment,
             mock=mock,
         )

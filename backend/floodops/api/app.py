@@ -133,20 +133,26 @@ async def lifespan(app: FastAPI):
     # Keyless real-data connectors (Open-Meteo rainfall/discharge, OSM Overpass).
     # Injected into the agents that consume them; everything degrades to mock
     # generation when a source is unreachable.
+    from floodops.connectors.gdacs import GDACSConnector
     from floodops.connectors.openmeteo import OpenMeteoConnector
     from floodops.connectors.osm import OSMConnector
+    from floodops.connectors.reliefweb import ReliefWebConnector
     openmeteo = OpenMeteoConnector()
     osm = OSMConnector()
-    _app_state["connectors"] = {"openmeteo": openmeteo, "osm": osm}
+    gdacs = GDACSConnector()
+    reliefweb = ReliefWebConnector()
+    _app_state["connectors"] = {"openmeteo": openmeteo, "osm": osm,
+                                "gdacs": gdacs, "reliefweb": reliefweb}
 
     agents = [
-        SentinelAgent(event_bus=event_bus, llm=fast_client, connector=openmeteo),
+        SentinelAgent(event_bus=event_bus, llm=fast_client, connector=openmeteo,
+                      gdacs=gdacs),
         GLOFAgent(event_bus=event_bus, llm=llm_client),
         FloodPredictAgent(event_bus=event_bus, llm=llm_client, connector=openmeteo),
         UrbanRiskAgent(event_bus=event_bus, llm=deep_client, connector=osm),
         AlertAgent(event_bus=event_bus, llm=llm_client),
         ResourceAgent(event_bus=event_bus, llm=llm_client),
-        DiseaseRiskAgent(event_bus=event_bus, llm=llm_client),
+        DiseaseRiskAgent(event_bus=event_bus, llm=llm_client, connector=reliefweb),
         CompoundEventAgent(event_bus=event_bus, llm=deep_client),
     ]
     for agent in agents:

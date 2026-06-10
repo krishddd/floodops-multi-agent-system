@@ -58,9 +58,11 @@ class CompoundEventAgent(BaseAgent):
         await self.event_bus.subscribe("disease_risk", self.handle_signal)
         await self.event_bus.subscribe("glof_emergencies", self.handle_signal)
         await self.event_bus.subscribe("anomaly_alerts", self.handle_signal)
+        await self.event_bus.subscribe("external_hazards", self.handle_signal)
         self.log_action(
             "initialize",
-            "CompoundEventAgent subscribed to flood/disease/glof/anomaly channels",
+            "CompoundEventAgent subscribed to flood/disease/glof/anomaly/"
+            "external-hazard channels",
             1.0,
         )
 
@@ -149,6 +151,20 @@ class CompoundEventAgent(BaseAgent):
                 ContributingHazard(
                     hazard_type="landslide", source_agent="sentinel_agent",
                     severity=sev, detail=f"saturation anomaly {sigma:.1f}σ",
+                ),
+                bbox,
+            )
+        if channel == "external_hazards":
+            # v4: independent regional confirmation (GDACS) — real-hazard feed,
+            # severity mapped deterministically from the GDACS alert level.
+            sev = max(0.0, min(1.0, float(data.get("severity", 0.3) or 0.3)))
+            return (
+                ContributingHazard(
+                    hazard_type="regional_flood_alert",
+                    source_agent="sentinel_agent",
+                    severity=sev,
+                    detail=(f"GDACS {str(data.get('alert_level', 'green')).upper()} "
+                            f"event '{str(data.get('name', ''))[:80]}'"),
                 ),
                 bbox,
             )

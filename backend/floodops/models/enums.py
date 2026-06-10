@@ -97,6 +97,8 @@ class DataSource(StrEnum):
     WORLDPOP = "WORLDPOP"                 # ⚪ annual
     HYDROSHEDS = "HYDROSHEDS"             # ⚪ static
     DARTMOUTH = "DARTMOUTH"               # ⚪ event-based archive
+    GDACS = "GDACS"                       # 🟢 continuous global alerts (v4)
+    RELIEFWEB = "RELIEFWEB"               # 🟡 daily, days-old reports (v4)
 
 
 class ConnectorStatus(StrEnum):

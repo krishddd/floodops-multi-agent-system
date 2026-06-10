@@ -137,6 +137,13 @@ LEAD_TIME_SKILL_RETENTION: list[float] = [1.0, 0.99, 0.97, 0.94, 0.90, 0.85, 0.7
 # Minimum estimated F1 for a lead day to count toward the warning horizon.
 SKILLFUL_F1_THRESHOLD: float = float(os.getenv("SKILLFUL_F1_THRESHOLD", "0.2"))
 
+# v4 — demo basin centre (Bagmati/Kathmandu) and its approximate bbox half-width
+# in degrees. The basin bbox is [lat ± half, lng ± half] — a documented
+# rectangle approximation used for GDACS cross-validation overlap checks.
+BASIN_CENTER_LAT: float = float(os.getenv("BASIN_CENTER_LAT", "27.7"))
+BASIN_CENTER_LNG: float = float(os.getenv("BASIN_CENTER_LNG", "85.3"))
+BASIN_BBOX_HALF_DEG: float = float(os.getenv("BASIN_BBOX_HALF_DEG", "1.0"))
+
 # Watershed flow topology for causal-graph reasoning (v2). Config-driven adjacency
 # (upstream -> downstream), keyed by region id, configurable per-region. This is
 # the SOLE source of topology — change DEFAULT_WATERSHED_REGION (or add a region)

@@ -33,6 +33,9 @@ from typing import Any
 from floodops.agents.base import BaseAgent
 from floodops.config import (
     ANOMALY_THRESHOLDS,
+    BASIN_BBOX_HALF_DEG,
+    BASIN_CENTER_LAT,
+    BASIN_CENTER_LNG,
     CRON_SENTINEL_GAUGES,
     CRON_SENTINEL_WEATHER,
     DEESCALATION_GAUGE_HOURS,
@@ -57,7 +60,8 @@ class SentinelAgent(BaseAgent):
     agent_id: str = "sentinel_agent"
     trigger_types: set[TriggerType] = {TriggerType.CRON}
 
-    def __init__(self, event_bus: EventBus, llm=None, connector=None) -> None:
+    def __init__(self, event_bus: EventBus, llm=None, connector=None,
+                 gdacs=None) -> None:
         super().__init__(event_bus, llm, connector)
         # Baselines keyed by (watershed_id, metric)
         self._baselines: dict[tuple[str, str], Baseline] = {}
@@ -65,9 +69,13 @@ class SentinelAgent(BaseAgent):
         self._recent_readings: list[SensorReading] = []
         # Gauge history for recession detection: gauge_id → list[(timestamp, value)]
         self._gauge_history: dict[str, list[tuple[datetime, float]]] = {}
+        # v4: optional GDACS connector for independent cross-validation.
+        self.gdacs = gdacs
+        # Dedup of already-emitted GDACS event ids (per process).
+        self._gdacs_seen: set[str] = set()
 
     async def initialize(self) -> None:
-        """Register CRON jobs for weather and gauge polling."""
+        """Register CRON jobs for weather, gauge, and GDACS polling."""
         await self.event_bus.register_cron(
             CRON_SENTINEL_WEATHER,
             self._poll_weather,
@@ -78,6 +86,12 @@ class SentinelAgent(BaseAgent):
             self._poll_gauges,
             job_id="sentinel_gauges",
         )
+        if self.gdacs is not None:
+            await self.event_bus.register_cron(
+                CRON_SENTINEL_WEATHER,
+                self._poll_gdacs,
+                job_id="sentinel_gdacs",
+            )
         self._logger.info("SentinelAgent initialised with CRON polling")
 
     async def handle_event(self, channel: str, payload: Any) -> None:
@@ -161,6 +175,80 @@ class SentinelAgent(BaseAgent):
 
         # Check for flood recession
         await self._check_recession()
+
+    async def _poll_gdacs(self) -> None:
+        """Cross-validate against GDACS global flood alerts (v4, keyless).
+
+        Two deterministic outputs (never LLM-gated):
+          * every active flood event → ``external_hazards`` (independent
+            confirmation signal consumed by the CompoundEventAgent);
+          * an Orange/Red event whose bbox intersects the basin bbox
+            (rectangle approximation, WGS84) → an ``anomaly_alerts`` boost,
+            because an independent global system confirms flooding here.
+        """
+        if self.gdacs is None:
+            return
+        try:
+            events = await self.gdacs.get_flood_events()
+        except Exception as exc:
+            self._logger.warning("GDACS poll failed: %s", exc)
+            return
+        if not events:
+            return
+
+        basin_bbox = BBox(
+            south=BASIN_CENTER_LAT - BASIN_BBOX_HALF_DEG,
+            west=BASIN_CENTER_LNG - BASIN_BBOX_HALF_DEG,
+            north=BASIN_CENTER_LAT + BASIN_BBOX_HALF_DEG,
+            east=BASIN_CENTER_LNG + BASIN_BBOX_HALF_DEG,
+        )
+        for event in events:
+            event_id = event.get("event_id") or ""
+            if not event_id or event_id in self._gdacs_seen:
+                continue
+            self._gdacs_seen.add(event_id)
+            await self.event_bus.emit("external_hazards", {
+                "source": "GDACS",
+                "event_id": event_id,
+                "name": event.get("name", ""),
+                "alert_level": event.get("alert_level", "green"),
+                "severity": float(event.get("severity", 0.3)),
+                "bbox": event.get("bbox"),
+                "from_date": event.get("from_date"),
+                "report_url": event.get("report_url"),
+            })
+
+            overlaps = (
+                event.get("bbox")
+                and self.gdacs._intersects(basin_bbox, event["bbox"])
+            )
+            if overlaps and event.get("alert_level") in ("orange", "red"):
+                level = (AlertLevel.CRITICAL if event["alert_level"] == "red"
+                         else AlertLevel.HIGH)
+                alert = AnomalyAlert(
+                    alert_id=str(uuid.uuid4()),
+                    level=level,
+                    metric="external_flood_confirmation",
+                    value=float(event.get("severity", 0.6)),
+                    deviation_sigma=ANOMALY_THRESHOLDS[level.value],
+                    location=Coordinate(lat=BASIN_CENTER_LAT, lng=BASIN_CENTER_LNG),
+                    watershed_id="basin_default",
+                    bbox=basin_bbox,
+                    confidence=0.9,  # independent system confirmation
+                    agreeing_sensors=1,
+                    total_sensors=1,
+                    source_readings=[],
+                    timestamp=datetime.utcnow(),
+                )
+                await self.event_bus.emit("anomaly_alerts", alert.model_dump())
+                self.log_action(
+                    "emit_gdacs_confirmation",
+                    f"GDACS {event['alert_level'].upper()} flood event "
+                    f"'{event.get('name', '?')}' overlaps basin bbox — "
+                    "independent confirmation boost",
+                    0.9,
+                    data_sources=["GDACS:continuous"],
+                )
 
     # ── Anomaly detection ────────────────────────────────────────────
 
