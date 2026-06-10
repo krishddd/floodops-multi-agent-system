@@ -72,7 +72,16 @@ def _snapshot() -> dict:
 
 @router.websocket("/ws/flood")
 async def websocket_flood(ws: WebSocket):
-    """WebSocket endpoint for live flood state updates."""
+    """WebSocket endpoint for live flood state updates.
+
+    v4 auth: when FLOODOPS_API_KEY is set the upgrade must carry
+    ``?api_key=…`` (browsers cannot set custom headers on WebSocket()); the
+    connection is closed with 1008 (policy violation) otherwise.
+    """
+    from floodops.config import FLOODOPS_API_KEY
+    if FLOODOPS_API_KEY and ws.query_params.get("api_key") != FLOODOPS_API_KEY:
+        await ws.close(code=1008)
+        return
     await ws.accept()
     _connections.add(ws)
     _app_state.setdefault("ws_clients", set()).add(ws)

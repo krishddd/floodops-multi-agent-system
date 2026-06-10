@@ -246,6 +246,16 @@ ENSEMBLE_MEMBER_COUNT: int = 50      # ECMWF ensemble members
 ENSEMBLE_REPRESENTATIVE_COUNT: int = 10  # k-means clustered for spaghetti plot
 
 # ---------------------------------------------------------------------------
+# v4 — persistence + API auth
+# ---------------------------------------------------------------------------
+# SQLite is single-node/evaluation persistence; production = PostgreSQL via an
+# async driver (schema kept portable). Empty value disables persistence.
+FLOODOPS_DB_PATH: str = os.getenv("FLOODOPS_DB_PATH", "floodops.db")
+# When set, /api/v1/* requires the X-API-Key header and the WebSocket upgrade
+# requires ?api_key=… (browsers cannot set WS headers). Unset = open dev mode.
+FLOODOPS_API_KEY: str = os.getenv("FLOODOPS_API_KEY", "")
+
+# ---------------------------------------------------------------------------
 # API / Server
 # ---------------------------------------------------------------------------
 API_HOST: str = os.getenv("API_HOST", "0.0.0.0")

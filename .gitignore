@@ -56,3 +56,8 @@ results/
 # OS
 .DS_Store
 Thumbs.db
+
+# v4 SQLite persistence
+*.db
+*.db-wal
+*.db-shm

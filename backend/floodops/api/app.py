@@ -159,10 +159,22 @@ async def lifespan(app: FastAPI):
         await agent.initialize()
     _app_state["agents"] = agents
 
+    # v4: SQLite persistence (single-node/eval — see obs/store.py docstring).
+    # Forecasts and alert dispatches survive restarts; empty FLOODOPS_DB_PATH
+    # disables it cleanly.
+    from floodops.obs.store import Store
+    store = Store()
+    await store.init()
+    if store.enabled:
+        await event_bus.subscribe("flood_forecasts", store.save_forecast)
+        await event_bus.subscribe("alert_dispatches", store.save_alert)
+    _app_state["store"] = store
+
     # v4: forecast verification loop — records every forecast and scores
     # matured ones against GloFAS reanalysis on a crash-proof asyncio task.
     from floodops.obs.verification import ForecastVerifier
-    verifier = ForecastVerifier(connector=openmeteo)
+    verifier = ForecastVerifier(connector=openmeteo,
+                                store=store if store.enabled else None)
     await event_bus.subscribe("flood_forecasts", verifier.record)
     verifier.start()
     _app_state["verifier"] = verifier
@@ -193,6 +205,8 @@ async def lifespan(app: FastAPI):
     # ── Shutdown ─────────────────────────────────────────────────
     if _app_state.get("verifier") is not None:
         await _app_state["verifier"].stop()
+    if _app_state.get("store") is not None:
+        await _app_state["store"].close()
     for agent in _app_state.get("agents", []):
         if hasattr(agent, "close"):
             await agent.close()
@@ -205,11 +219,28 @@ def create_app() -> FastAPI:
     setup_logging()
 
     app = FastAPI(
-        title="FloodOps v3",
+        title="FloodOps v4",
         description="Multi-agent flood orchestration system — UI-first architecture",
-        version="0.3.0",
+        version="0.4.0",
         lifespan=lifespan,
     )
+
+    # v4: minimal API-key auth. When FLOODOPS_API_KEY is set, /api/v1/* needs
+    # the X-API-Key header (the WS upgrade uses ?api_key=… — browsers cannot
+    # set custom WS headers). Unset = open dev mode. Full AuthN/Z and rate
+    # limiting are documented out-of-scope for v4.
+    from floodops.config import FLOODOPS_API_KEY
+    if FLOODOPS_API_KEY:
+        from fastapi import Request
+        from fastapi.responses import JSONResponse
+
+        @app.middleware("http")
+        async def _api_key_guard(request: Request, call_next):
+            if request.url.path.startswith("/api/v1/") and \
+                    request.headers.get("X-API-Key") != FLOODOPS_API_KEY:
+                return JSONResponse(status_code=401,
+                                    content={"detail": "invalid or missing API key"})
+            return await call_next(request)
 
     # CORS for Vite frontend
     app.add_middleware(
@@ -227,8 +258,10 @@ def create_app() -> FastAPI:
     from floodops.api.routes_map import router as map_router
     from floodops.api.routes_scenario import router as scenario_router
     from floodops.api.routes_timeline import router as timeline_router
+    from floodops.api.routes_v4 import router as v4_router
     from floodops.api.websocket import router as ws_router
 
+    app.include_router(v4_router, prefix="/api/v1", tags=["v4 Ops"])
     app.include_router(flood_router, prefix="/api/v1/flood", tags=["Flood State"])
     app.include_router(map_router, prefix="/api/v1/map", tags=["Map Layers"])
     app.include_router(auth_router, prefix="/auth", tags=["Auth"])

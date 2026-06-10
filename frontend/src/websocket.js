@@ -26,6 +26,13 @@ function _setConn(state) {
 export function connect(url) {
     if (_ws && _ws.readyState === WebSocket.OPEN) return;
 
+    // v4 auth: browsers cannot set custom WS headers, so the API key (when
+    // configured) rides as a query param on the upgrade request.
+    const apiKey = (window.FLOODOPS_CONFIG || {}).API_KEY;
+    if (apiKey) {
+        url += (url.includes('?') ? '&' : '?') + 'api_key=' + encodeURIComponent(apiKey);
+    }
+
     _ws = new WebSocket(url);
 
     _ws.onopen = () => {
