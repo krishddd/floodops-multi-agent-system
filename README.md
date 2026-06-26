@@ -17,6 +17,8 @@ panel for situational reasoning.
 > the codebase under `backend/` and `frontend/` is being built out. The
 > companion `implementation_plan.md` carries the full v2 spec.
 
+> 💡 Run `docker compose up` for a full local demo — no API keys needed, all connectors fall back to deterministic mocks.
+
 ---
 
 ## What it does, end to end
