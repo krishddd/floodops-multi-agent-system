@@ -39,6 +39,11 @@ from floodops.config import (
     GROQ_MODEL,
     LLM_MAX_RETRIES,
     LLM_RATE_LIMIT_COOLDOWN_S,
+    NVIDIA_API_KEY,
+    NVIDIA_BASE_URL,
+    NVIDIA_MINIMAX_API_KEY,
+    NVIDIA_MINIMAX_MODEL,
+    NVIDIA_MODEL,
     OPENAI_COMPAT_API_KEY,
     OPENAI_COMPAT_BASE_URL,
     OPENAI_COMPAT_MODEL,
@@ -579,14 +584,35 @@ def _github() -> OpenAICompatProvider:
     )
 
 
+def _nvidia() -> OpenAICompatProvider:
+    """NVIDIA NIM-hosted GLM (default ``z-ai/glm-5.1``) via the OpenAI-compatible
+    ``integrate.api.nvidia.com`` gateway. Wired as a fallback voter in the chain."""
+    return OpenAICompatProvider(
+        "nvidia", NVIDIA_BASE_URL, NVIDIA_API_KEY, NVIDIA_MODEL
+    )
+
+
+def _nvidia_minimax() -> OpenAICompatProvider:
+    """Second NVIDIA NIM-hosted model (default ``minimaxai/minimax-m2.7``).
+
+    Shares the NIM endpoint; its own key is optional and falls back to
+    ``NVIDIA_API_KEY`` (a NIM key usually authorizes every model on the gateway).
+    """
+    return OpenAICompatProvider(
+        "nvidia-minimax", NVIDIA_BASE_URL,
+        NVIDIA_MINIMAX_API_KEY or NVIDIA_API_KEY, NVIDIA_MINIMAX_MODEL,
+    )
+
+
 def make_provider(which: str = FLOODOPS_LLM_PROVIDER) -> LLMProvider:
     """Build a provider from config/env, wrapped in the 429-cooldown guard.
 
     ``which`` is ``anthropic`` | ``gemini`` | ``groq`` | ``github`` |
-    ``openrouter`` | ``openai-compat`` | ``auto``. ``auto`` returns the first
-    provider whose key is set (Anthropic → Gemini → Groq → GitHub → OpenRouter
-    → custom compat endpoint), else a ``NullProvider`` (never wrapped — it
-    makes no network calls).
+    ``openrouter`` | ``openai-compat`` | ``nvidia`` | ``nvidia-minimax`` |
+    ``auto``. ``auto`` returns the first provider whose key is set (Anthropic →
+    Gemini → Groq → GitHub → OpenRouter → custom compat → NVIDIA GLM → NVIDIA
+    MiniMax), else a ``NullProvider`` (never wrapped — it makes no network
+    calls).
     """
     which = (which or "auto").lower()
     factories = {
@@ -597,13 +623,18 @@ def make_provider(which: str = FLOODOPS_LLM_PROVIDER) -> LLMProvider:
         "openrouter": _openrouter,
         "openai-compat": _openai_compat,
         "openai_compat": _openai_compat,
+        "nvidia": _nvidia,
+        "nvidia-minimax": _nvidia_minimax,
+        "nvidia_minimax": _nvidia_minimax,
     }
     if which in factories:
         return CooldownProvider(factories[which]())
 
-    # auto — first configured backend wins, else null.
+    # auto — first configured backend wins, else null. NVIDIA NIM models sit at
+    # the end of the order: they activate as primary only when nothing else is
+    # keyed; otherwise they ride along as fallback voters (see app lifespan).
     for factory in (AnthropicProvider, GeminiProvider, _groq, _github,
-                    _openrouter, _openai_compat):
+                    _openrouter, _openai_compat, _nvidia, _nvidia_minimax):
         candidate = factory()
         if candidate.available():
             return CooldownProvider(candidate)

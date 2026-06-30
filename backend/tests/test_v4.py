@@ -26,6 +26,37 @@ def test_github_provider_selection():
     assert p.name == "github"
 
 
+def test_nvidia_provider_factories():
+    # NVIDIA NIM fallback models (GLM 5.1 + MiniMax) on the OpenAI-compatible
+    # integrate.api.nvidia.com gateway. Keyless by default → unavailable.
+    from floodops.llm.providers import _nvidia, _nvidia_minimax, make_provider
+
+    glm = _nvidia()
+    assert glm.name == "nvidia"
+    assert "integrate.api.nvidia.com" in glm._base_url
+    assert glm._model == "z-ai/glm-5.1"
+    assert not glm.available()  # no NVIDIA_API_KEY set in the test env
+
+    mm = _nvidia_minimax()
+    assert mm.name == "nvidia-minimax"
+    assert mm._model == "minimaxai/minimax-m2.7"
+
+    # Selectable by name; wrapped in the 429-cooldown guard (name preserved).
+    assert make_provider("nvidia").name == "nvidia"
+    assert make_provider("nvidia-minimax").name == "nvidia-minimax"
+
+
+def test_nvidia_minimax_key_falls_back_to_shared_key(monkeypatch):
+    # The MiniMax model reuses NVIDIA_API_KEY when it has no dedicated key.
+    import floodops.llm.providers as prov
+
+    monkeypatch.setattr(prov, "NVIDIA_API_KEY", "nvapi-shared")
+    monkeypatch.setattr(prov, "NVIDIA_MINIMAX_API_KEY", "")
+    p = prov._nvidia_minimax()
+    assert p._api_key == "nvapi-shared"
+    assert p.available()
+
+
 def test_cooldown_marks_provider_unavailable(monkeypatch):
     import floodops.llm.providers as prov
 

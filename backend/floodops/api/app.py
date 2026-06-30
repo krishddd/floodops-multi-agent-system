@@ -75,10 +75,20 @@ async def lifespan(app: FastAPI):
 
     primary = make_provider()
     extras = []
+    seen = {primary.name}
     for name in (n.strip() for n in LLM_ENSEMBLE_PROVIDERS.split(",") if n.strip()):
         p = make_provider(name)
-        if p.name != primary.name and p.available():
+        if p.name not in seen and p.available():
             extras.append(p)
+            seen.add(p.name)
+    # NVIDIA NIM fallback models (GLM 5.1, MiniMax) auto-join the fallthrough
+    # chain whenever their key is set — so a primary 429 / token-limit falls
+    # through to them without any LLM_ENSEMBLE_PROVIDERS config. Deduped by name.
+    for name in ("nvidia", "nvidia-minimax"):
+        p = make_provider(name)
+        if p.name not in seen and p.available():
+            extras.append(p)
+            seen.add(p.name)
     llm_client = FloodLLMClient(provider=primary, extra_providers=extras)
     reasoner = FloodReasoner(llm_client)
 

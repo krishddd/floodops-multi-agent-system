@@ -98,6 +98,12 @@ ungauged watersheds*, Nature 627, 559–563 (2024), DOI 10.1038/s41586-024-07145
   never silent-Null); per-agent routing in the lifespan (Groq fast lane =
   sentinel, GitHub deep lane = compound/urban). **Tier honesty:** Groq/GitHub
   free tiers are demo/eval — agency deployment swaps paid endpoints by config.
+  **NVIDIA NIM fallback** (`nvidia` = `z-ai/glm-5.1`, `nvidia-minimax` =
+  `minimaxai/minimax-m2.7`, OpenAI-compatible `integrate.api.nvidia.com`,
+  `NVIDIA_API_KEY` / optional `NVIDIA_MINIMAX_API_KEY`): both auto-join the
+  fallthrough/ensemble chain in the lifespan whenever keyed — so a primary
+  429/token-limit cools down and falls through to them — and sit last in the
+  `auto` order (primary only if nothing else is keyed). No-op until keyed.
 - **Live hazard connectors:** `connectors/gdacs.py` (keyless GeoJSON flood
   events, Green/Orange/Red severity map; research-use ToS — agencies need a
   data agreement). Sentinel polls it on CRON → `external_hazards` channel

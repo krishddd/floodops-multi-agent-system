@@ -56,6 +56,22 @@ OPENAI_COMPAT_MODEL: str = os.getenv("OPENAI_COMPAT_MODEL", "")
 GITHUB_MODELS_TOKEN: str = os.getenv("GITHUB_MODELS_TOKEN", "")
 GITHUB_MODELS_MODEL: str = os.getenv("GITHUB_MODELS_MODEL", "openai/gpt-4.1-mini")
 
+# NVIDIA NIM (build.nvidia.com / integrate.api.nvidia.com) — an OpenAI-compatible
+# gateway hosting open-weight frontier models (GLM, MiniMax, …). Wired as extra
+# FALLBACK voters: when the primary/free-tier providers 429 or hit a token
+# limit, the provider chain falls through to these (and they also join the
+# ensemble-vote pool). Keys are added later in .env; until then available() is
+# False and the providers are skipped. Two models are pre-wired:
+#   nvidia          → NVIDIA_MODEL          (default z-ai/glm-5.1)
+#   nvidia-minimax  → NVIDIA_MINIMAX_MODEL  (default minimaxai/minimax-m2.7)
+# The MiniMax key is optional — it falls back to NVIDIA_API_KEY when unset (NIM
+# keys typically authorize every model on the endpoint).
+NVIDIA_BASE_URL: str = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
+NVIDIA_API_KEY: str = os.getenv("NVIDIA_API_KEY", "")
+NVIDIA_MODEL: str = os.getenv("NVIDIA_MODEL", "z-ai/glm-5.1")
+NVIDIA_MINIMAX_API_KEY: str = os.getenv("NVIDIA_MINIMAX_API_KEY", "")
+NVIDIA_MINIMAX_MODEL: str = os.getenv("NVIDIA_MINIMAX_MODEL", "minimaxai/minimax-m2.7")
+
 # v4 — rate-limit cooldown for free-tier providers: a 429 marks the backend
 # unavailable for this many seconds; callers fall through the provider chain
 # (never silently to Null — the final fallback is the deterministic mock).
