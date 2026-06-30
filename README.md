@@ -8,16 +8,23 @@
 
 `floodops` is a Python + LangGraph backend paired with a Vite + Google Maps
 frontend. It ingests data from NOAA, USGS, ESA Copernicus, ECMWF,
-HydroSHEDS, GLIMS, OSM, WorldPop, ESA CCI Soil Moisture, and the
-Dartmouth Flood Observatory; runs a 7-phase state machine across 8
-specialised agents; and surfaces the result on a live map with an LLM chat
-panel for situational reasoning.
+HydroSHEDS, GLIMS, OSM, WorldPop, ESA CCI Soil Moisture, the Dartmouth Flood
+Observatory, GDACS, ReliefWeb, and **Google's operational Flood Forecasting
+API** (the Nature-2024 LSTM model behind [Flood Hub](https://g.co/floodhub));
+runs a 7-phase state machine across 8 specialised agents; and surfaces the
+result on a live map with an LLM chat panel for situational reasoning.
 
-> ⚠️ **Work in progress.** This README documents the implementation plan;
-> the codebase under `backend/` and `frontend/` is being built out. The
-> companion `implementation_plan.md` carries the full v2 spec.
+> ✅ **Built and tested.** The backend boots and demos **with no API key**
+> (deterministic mock fallbacks), with **77 offline tests green**. Keys are
+> additive — each one promotes a connector or the LLM from mock to live.
+> See [`CLAUDE.md`](CLAUDE.md) for the engineering guide and the v2→v5
+> capability log.
 
-> 💡 Run `docker compose up` for a full local demo — no API keys needed, all connectors fall back to deterministic mocks.
+> 💡 Run `docker compose up` (or `make up`) for a full local demo — no API
+> keys needed, all connectors fall back to deterministic mocks.
+
+> 🔒 **Never put a real key in `.env.example`** — it is a committed template.
+> Real secrets belong only in `.env` (gitignored). See *Setup & credentials*.
 
 ---
 
@@ -120,6 +127,35 @@ logging).
 Each connector implements `health_check()` so the API can report data-source
 status on the dashboard.
 
+### Google Flood Forecasting API (v5, the operational Nature-2024 model) 🔑
+
+`connectors/googleflood.py` wraps Google's **Flood Forecasting API**
+(`floodforecasting.googleapis.com/v1`) — the operational LSTM of Nearing et
+al., *Nature* 627 (2024), free under CC BY 4.0. It is **key-gated and honest**:
+without a key, `available` is `False` and every method returns `None` (never a
+faked value). Activate by setting `FLOODS_API_KEY` (the name Google's colab/docs
+use) or the legacy `GOOGLE_FLOOD_API_KEY` in `.env`.
+
+The connector mirrors the **full surface** of Google's
+`Google_Flood_Forecasting_API_Usage_Example` colab, all paginated via
+`nextPageToken`:
+
+| Method | What it returns |
+|---|---|
+| `get_gauges` / `get_flood_status` | gauges + latest per-gauge severity (filtered by `regionCode`, then narrowed to the basin bbox client-side) |
+| `query_gauge_forecasts` | quantitative discharge/level forecasts with lead times (Hydrology Model API) |
+| `get_gauge_models` | official warning / danger / extreme thresholds |
+| `get_significant_events` | clustered major flood events (area + population impact) |
+| `get_flash_floods` | urban flash-flood probabilities (24 h) |
+| `get_serialized_polygon` | inundation / notification / event KML geometry |
+
+In the pipeline, **Sentinel** cross-validates against it: every status →
+`external_hazards` (compound fusion); a SEVERE/EXTREME status in the basin →
+an independent AI-model anomaly boost. It is treated as an **independent
+forecast signal — never an input** to the local runoff ensemble (paper safety
+rule). Verified live against the pilot API (765 Nepal gauges → 178 in the
+Bagmati bbox; all endpoints `200`).
+
 ---
 
 ## LLM reasoning layer
@@ -127,10 +163,15 @@ status on the dashboard.
 `backend/floodops/llm/` is the intelligence that turns raw data into
 human-understandable decisions.
 
-- **`client.py`** — `FloodLLMClient` wraps `google-genai`. Uses
-  `gemini-2.5-flash` for fast interpretation and `gemini-2.5-pro` for
-  complex multi-factor analysis. Supports structured output (Pydantic
-  schemas), Google Search grounding, function calling, and streaming.
+- **`client.py` + `providers.py`** — `FloodLLMClient` is **provider-agnostic**
+  via an `LLMProvider` protocol: Anthropic (`claude-opus-4-8`, structured
+  output via `messages.parse`), Gemini, Groq / OpenRouter / any
+  OpenAI-compatible endpoint, GitHub Models, and a deterministic `NullProvider`
+  for keyless runs. `FLOODS_LLM_PROVIDER=anthropic|gemini|groq|…|auto` selects
+  the chain. With no key, `available()` is `False` and every reasoning helper
+  returns its deterministic mock — **the LLM augments reasoning but never gates
+  safety decisions** (alert severity and flood probability are computed without
+  it). Supports structured output, ensemble voting, and reflexion.
 - **`prompts.py`** — four canonical system prompts:
   - **Anomaly interpreter** — explains *why* a sensor anomaly matters
     given watershed context.
@@ -215,6 +256,18 @@ GET   /api/v1/map/disease-risk          disease risk heatmap GeoJSON
 GET   /api/v1/map/flood-depth           predicted depth grid GeoJSON
 GET   /api/v1/map/urban-zones           zone risk reports
 
+GET   /api/v1/verification/skill        measured forecast skill (±2-day F1) or cold-start prior
+GET   /api/v1/basin/thresholds          Weibull-fitted return-period discharge thresholds
+GET   /api/v1/hazards/gdacs             live GDACS flood events overlay
+GET   /api/v1/alerts/{id}/cap.xml       dispatched alert as CAP 1.2 XML
+
+# Google Flood Forecasting API (v5, key-gated — honest available:false until keyed)
+GET   /api/v1/hazards/googleflood                     latest basin flood statuses
+GET   /api/v1/hazards/googleflood/forecasts           quantitative discharge/level forecasts
+GET   /api/v1/hazards/googleflood/significant-events  clustered major flood events
+GET   /api/v1/hazards/googleflood/flash-floods        urban flash-flood probabilities
+GET   /api/v1/basin/google-thresholds                 Google's official thresholds (cross-check)
+
 GET   /auth/login                       Google OAuth consent redirect
 GET   /auth/callback                    exchange code, store tokens
 GET   /auth/status                      is the session authenticated?
@@ -278,8 +331,15 @@ flood_multi-agent_system/
 You will need accounts / API keys from the following before the system runs
 end to end:
 
+0. **None, to start.** The system boots and demos with **zero keys** — every
+   connector and the LLM fall back to deterministic mocks. Keys below are
+   additive; add them as you need live data. **Put real keys only in `.env`
+   (gitignored), never in the committed `.env.example` template.**
 1. **Google Cloud Console** — Create a project. Enable Maps JS API,
-   Geocoding API, Routes API, Sheets API, Drive API, Gmail API.
+   Geocoding API, Routes API, Sheets API, Drive API, Gmail API. For live AI
+   flood forecasts, also join the **Flood Forecasting API** pilot
+   ([waitlist](https://support.google.com/flood-hub/answer/16364306)), enable
+   it, and reply to Google with your Cloud Project ID → set `FLOODS_API_KEY`.
 2. **OAuth consent screen** — Configure scopes and create a Web Application
    OAuth Client ID.
 3. **Google AI Studio** — Get a Gemini API key.
@@ -303,6 +363,12 @@ GOOGLE_REDIRECT_URI=http://localhost:8000/auth/callback
 
 # Gemini
 GOOGLE_GENAI_API_KEY=your-gemini-api-key
+
+# Google Flood Forecasting API (v5) — the operational Nature-2024 model.
+# Free/CC BY 4.0; join the pilot waitlist, enable the API, and reply to Google
+# with your Cloud Project ID. FLOODS_API_KEY is Google's canonical name;
+# GOOGLE_FLOOD_API_KEY is the legacy alias (wins if both set).
+FLOODS_API_KEY=your-flood-forecasting-api-key
 
 # USGS
 API_USGS_PAT=your-usgs-api-key
@@ -390,9 +456,23 @@ Key test scenarios:
 
 ## Status
 
-🚧 In development — codebase is being built per `implementation_plan.md`.
-Existing artefacts (`flood_agent_specs.jsx`,
-`flood_multiagent_orchestration.html`) capture the visual / UX spec.
+✅ **Built and operational through v5.** The backend runs keyless (mock
+fallbacks) with **77 offline tests green** (`cd backend && python -m pytest
+tests -q`). Capability layers, newest first:
+
+- **v5** — Google Flood Forecasting API connector (full colab surface,
+  live-verified), runoff calibration, forecast skill panel.
+- **v4** — multi-model LLM fleet, live hazard feeds (GDACS, ReliefWeb), real
+  ML (climatology, runoff ensemble, verification loop), CAP 1.2 export,
+  SQLite persistence, optional API-key auth.
+- **v3** — per-basin return-period flood-frequency analysis, OpenAI-compatible
+  LLM providers (Groq / OpenRouter / local).
+- **v2** — live WebSocket command deck, observability, keyless real connectors,
+  CI/CD.
+
+See [`CLAUDE.md`](CLAUDE.md) for the full engineering guide. The
+`implementation_plan*.md` files and the HTML/JSX artefacts capture the original
+visual / UX spec.
 
 ## License
 
