@@ -44,11 +44,30 @@ variant with `docker compose build --build-arg INCLUDE_ML=true backend`.
 
 - **Google Flood Forecasting API** (`connectors/googleflood.py`, 🔑 key-gated):
   the operational Nature-2024 LSTM model (floodforecasting.googleapis.com,
-  free/CC BY 4.0, waitlist → `GOOGLE_FLOOD_API_KEY`). Sentinel polls it when
-  keyed: every status → `external_hazards`; SEVERE/EXTREME in the basin bbox →
-  anomaly boost (`ai_model_flood_forecast`, confidence 0.95 quality-verified /
-  0.75 otherwise, deduped per gauge+issued_time). Route
-  `/api/v1/hazards/googleflood` serves an honest `available: false` until keyed.
+  free/CC BY 4.0, waitlist → `FLOODS_API_KEY`, the name Google's colab/docs use;
+  legacy `GOOGLE_FLOOD_API_KEY` still honored and wins if both set). Sentinel
+  polls flood status when keyed: every status → `external_hazards`;
+  SEVERE/EXTREME in the basin bbox → anomaly boost (`ai_model_flood_forecast`,
+  confidence 0.95 quality-verified / 0.75 otherwise, deduped per
+  gauge+issued_time). The connector mirrors the **full colab surface**
+  (`Google_Flood_Forecasting_API_Usage_Example.ipynb`), all paginated via
+  `nextPageToken`: `get_gauges` / `get_flood_status` (the area search filters
+  by `regionCode` — ISO-3166 `BASIN_REGION_CODE`, default `NP`; the live API
+  rejects an `areaFilter` bbox with 400, so the basin bbox is applied
+  client-side on gauge locations — status now also surfaces `inundation_map_set`
+  + `notification_polygon_id`), `query_gauge_forecasts` (quantitative
+  discharge/level forecasts w/ lead times — Hydrology Model API; `gaugeIds`
+  must repeat per id, not nest a list), `get_gauge_models` (official
+  warning/danger/extreme thresholds, batched 50), `get_significant_events`,
+  `get_flash_floods`, `get_serialized_polygon` (KML geometry). Read-only routes
+  (honest `available: false` until keyed): `/api/v1/hazards/googleflood`,
+  `…/forecasts`, `…/significant-events`, `…/flash-floods`, and
+  `/api/v1/basin/google-thresholds` (Google's official thresholds as an
+  independent cross-check against our Weibull-fitted `/basin/thresholds`).
+  **Verified live 2026-06-30** (Nepal pilot key, project allowlisted): 765
+  national gauges → 178 in the Bagmati bbox, all endpoints 200. Only flood
+  status is wired into the agent pipeline so far (significant-event fusion is a
+  candidate for v6 — fusion schema not yet exercised).
 - **Runoff calibration** (`hydrology/calibration.py`, keyless): pairs the
   Open-Meteo archive precipitation reanalysis
   (`OpenMeteoConnector.get_historical_precipitation`) with the GloFAS

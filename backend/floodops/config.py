@@ -143,6 +143,11 @@ SKILLFUL_F1_THRESHOLD: float = float(os.getenv("SKILLFUL_F1_THRESHOLD", "0.2"))
 BASIN_CENTER_LAT: float = float(os.getenv("BASIN_CENTER_LAT", "27.7"))
 BASIN_CENTER_LNG: float = float(os.getenv("BASIN_CENTER_LNG", "85.3"))
 BASIN_BBOX_HALF_DEG: float = float(os.getenv("BASIN_BBOX_HALF_DEG", "1.0"))
+# ISO 3166-1 alpha-2 country code for the basin's region. The Google Flood
+# Forecasting API filters its area searches by regionCode (NOT a bbox); the
+# connector queries this region then filters to the basin bbox client-side.
+# Default "NP" = Nepal (the Bagmati demo basin).
+BASIN_REGION_CODE: str = os.getenv("BASIN_REGION_CODE", "NP")
 
 # v4 — physically-motivated runoff ensemble (uncalibrated defaults, see
 # hydrology/runoff.py): member precip perturbation spread and the linear-

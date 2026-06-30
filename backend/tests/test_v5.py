@@ -14,10 +14,31 @@ from floodops.queue.event_bus import EventBus
 
 def test_googleflood_unavailable_without_key(monkeypatch):
     monkeypatch.delenv("GOOGLE_FLOOD_API_KEY", raising=False)
+    monkeypatch.delenv("FLOODS_API_KEY", raising=False)
     from floodops.connectors.googleflood import GoogleFloodConnector
 
     conn = GoogleFloodConnector(api_key="")
     assert not conn.available
+
+
+def test_googleflood_accepts_floods_api_key_alias(monkeypatch):
+    # The name Google's own colab/docs use — a key pasted the documented way
+    # must activate the connector.
+    monkeypatch.delenv("GOOGLE_FLOOD_API_KEY", raising=False)
+    monkeypatch.setenv("FLOODS_API_KEY", "AIza-from-colab")
+    from floodops.connectors.googleflood import GoogleFloodConnector
+
+    assert GoogleFloodConnector().available
+
+
+def test_googleflood_key_precedence(monkeypatch):
+    # GOOGLE_FLOOD_API_KEY wins when both are set (backward-compat).
+    monkeypatch.setenv("GOOGLE_FLOOD_API_KEY", "legacy")
+    monkeypatch.setenv("FLOODS_API_KEY", "canonical")
+    from floodops.connectors.googleflood import GoogleFloodConnector
+
+    conn = GoogleFloodConnector()
+    assert conn.available and conn._api_key == "legacy"
 
 
 @pytest.mark.asyncio
@@ -40,7 +61,10 @@ async def test_googleflood_normalizes_statuses(monkeypatch):
 
     async def fake_post(method, body):
         assert method == "floodStatus:searchLatestFloodStatusByArea"
-        assert body["areaFilter"]["boundingBox"]["southWest"]["latitude"] == 27.0
+        # The live API filters by regionCode, NOT a bbox areaFilter (verified
+        # against the API: areaFilter → 400 INVALID_ARGUMENT).
+        assert body["regionCode"] == "NP"
+        assert "areaFilter" not in body
         return {"floodStatuses": [{
             "gaugeId": "hybas_4121489010", "severity": "SEVERE",
             "forecastTrend": "RISE", "qualityVerified": True,
@@ -50,12 +74,136 @@ async def test_googleflood_normalizes_statuses(monkeypatch):
 
     monkeypatch.setattr(conn, "_post", fake_post)
     statuses = await conn.get_flood_status(
-        BBox(south=27.0, west=85.0, north=28.0, east=86.0)
+        BBox(south=27.0, west=85.0, north=28.0, east=86.0)  # contains 27.7,85.3
     )
     assert statuses and statuses[0]["severity"] == "SEVERE"
     assert statuses[0]["severity_weight"] == 0.8
     assert statuses[0]["forecast_trend"] == "RISE"
     assert statuses[0]["quality_verified"] is True
+    assert (statuses[0]["lat"], statuses[0]["lng"]) == (27.7, 85.3)
+
+
+@pytest.mark.asyncio
+async def test_googleflood_bbox_filters_client_side(monkeypatch):
+    # Region search returns the whole country; the connector narrows to bbox.
+    from floodops.connectors.googleflood import GoogleFloodConnector
+    from floodops.models.geo import BBox
+
+    conn = GoogleFloodConnector(api_key="k")
+
+    async def fake_post(method, body):
+        return {"floodStatuses": [
+            {"gaugeId": "in", "severity": "SEVERE",
+             "gaugeLocation": {"latitude": 27.7, "longitude": 85.3}},
+            {"gaugeId": "out", "severity": "EXTREME",
+             "gaugeLocation": {"latitude": 10.0, "longitude": 80.0}},
+        ]}
+
+    monkeypatch.setattr(conn, "_post", fake_post)
+    statuses = await conn.get_flood_status(
+        BBox(south=27.0, west=85.0, north=28.0, east=86.0))
+    assert [s["gauge_id"] for s in statuses] == ["in"]
+
+
+@pytest.mark.asyncio
+async def test_googleflood_paginates_statuses(monkeypatch):
+    # get_flood_status must follow nextPageToken (the colab pattern), not stop
+    # at the first page.
+    from floodops.connectors.googleflood import GoogleFloodConnector
+    from floodops.models.geo import BBox
+
+    conn = GoogleFloodConnector(api_key="k")
+    pages = {
+        None: {"floodStatuses": [{"gaugeId": "a", "severity": "SEVERE"}],
+               "nextPageToken": "p2"},
+        "p2": {"floodStatuses": [{"gaugeId": "b", "severity": "EXTREME"}]},
+    }
+    calls = {"n": 0}
+
+    async def fake_post(method, body):
+        calls["n"] += 1
+        return pages[body.get("pageToken")]
+
+    monkeypatch.setattr(conn, "_post", fake_post)
+    statuses = await conn.get_flood_status(BBox(south=27, west=85, north=28, east=86))
+    assert calls["n"] == 2
+    assert [s["gauge_id"] for s in statuses] == ["a", "b"]
+    assert statuses[1]["severity_weight"] == 0.95
+
+
+@pytest.mark.asyncio
+async def test_googleflood_query_forecasts_buckets_and_merges(monkeypatch):
+    from floodops.connectors import googleflood as gf
+
+    conn = gf.GoogleFloodConnector(api_key="k")
+    monkeypatch.setattr(gf, "FORECAST_GAUGE_BUCKET", 2)  # force two buckets
+    seen_buckets = []
+
+    async def fake_get(path, params=None):
+        assert path == "gauges:queryGaugeForecasts"
+        # gaugeIds is repeated once per id (httpx-safe), not a nested list.
+        ids = [v for k, v in params if k == "gaugeIds"]
+        seen_buckets.append(tuple(ids))
+        return {"forecasts": {gid: {"forecasts": [{"lead": 1}]} for gid in ids}}
+
+    monkeypatch.setattr(conn, "_get", fake_get)
+    out = await conn.query_gauge_forecasts(
+        ["g1", "g2", "g3"], "2026-06-22", "2026-06-30")
+    assert seen_buckets == [("g1", "g2"), ("g3",)]
+    assert set(out) == {"g1", "g2", "g3"}
+
+
+@pytest.mark.asyncio
+async def test_googleflood_gauge_models_batchget(monkeypatch):
+    from floodops.connectors.googleflood import GoogleFloodConnector
+
+    conn = GoogleFloodConnector(api_key="k")
+
+    async def fake_get(path, params=None):
+        assert path == "gaugeModels:batchGet"
+        names = [v for k, v in params if k == "names"]
+        return {"gaugeModels": [{"name": n} for n in names]}
+
+    monkeypatch.setattr(conn, "_get", fake_get)
+    models = await conn.get_gauge_models(["g1", "g2"])
+    assert {m["name"] for m in models} == {"gaugeModels/g1", "gaugeModels/g2"}
+
+
+@pytest.mark.asyncio
+async def test_googleflood_significant_events_and_flash_floods(monkeypatch):
+    from floodops.connectors.googleflood import GoogleFloodConnector
+
+    conn = GoogleFloodConnector(api_key="k")
+
+    async def fake_post(method, body):
+        if method == "significantEvents:search":
+            return {"significantEvents": [{"eventPolygonId": "poly1"}]}
+        if method == "flashFloods:search":
+            return {"flashFloodEvents": [{"region": "urban1"}]}
+        raise AssertionError(method)
+
+    monkeypatch.setattr(conn, "_post", fake_post)
+    events = await conn.get_significant_events()
+    floods = await conn.get_flash_floods()
+    assert events[0]["eventPolygonId"] == "poly1"
+    assert floods[0]["region"] == "urban1"
+
+
+@pytest.mark.asyncio
+async def test_googleflood_serialized_polygon(monkeypatch):
+    from floodops.connectors.googleflood import GoogleFloodConnector
+
+    conn = GoogleFloodConnector(api_key="k")
+
+    async def fake_get(path, params=None):
+        assert path == "serializedPolygons/poly1"
+        return {"kml": "<kml>...</kml>"}
+
+    monkeypatch.setattr(conn, "_get", fake_get)
+    assert await conn.get_serialized_polygon("poly1") == "<kml>...</kml>"
+    # No key / empty id → honest None, no network.
+    assert await GoogleFloodConnector(api_key="").get_serialized_polygon("x") is None
+    assert await conn.get_serialized_polygon("") is None
 
 
 class StubGoogleFlood:

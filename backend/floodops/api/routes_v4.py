@@ -114,6 +114,99 @@ async def googleflood_status() -> dict[str, Any]:
                             "(Nearing et al. 2024)")}
 
 
+# ── v5: full Google Flood Forecasting surface (key-gated, read-only) ──────
+
+_GF_ATTR = "Google Flood Forecasting API, CC BY 4.0 (Nearing et al. 2024)"
+_GF_NOTE = ("set FLOODS_API_KEY or GOOGLE_FLOOD_API_KEY (waitlist: "
+            "support.google.com/flood-hub/answer/16364306)")
+
+
+def _googleflood():
+    """The connector if keyed & available, else None."""
+    conn = _state().get("connectors", {}).get("googleflood")
+    if conn is None or not getattr(conn, "available", False):
+        return None
+    return conn
+
+
+def _basin_bbox():
+    from floodops.config import BASIN_BBOX_HALF_DEG
+    from floodops.models.geo import BBox
+
+    return BBox(
+        south=BASIN_CENTER_LAT - BASIN_BBOX_HALF_DEG,
+        west=BASIN_CENTER_LNG - BASIN_BBOX_HALF_DEG,
+        north=BASIN_CENTER_LAT + BASIN_BBOX_HALF_DEG,
+        east=BASIN_CENTER_LNG + BASIN_BBOX_HALF_DEG,
+    )
+
+
+@router.get("/hazards/googleflood/forecasts")
+async def googleflood_forecasts(days_back: int = 7) -> dict[str, Any]:
+    """Quantitative LSTM forecasts (discharge/level, multiple lead times) for
+    the basin's gauges — Google's Hydrology Model API. Honest unavailable
+    until keyed."""
+    import datetime as _dt
+
+    conn = _googleflood()
+    if conn is None:
+        return {"available": False, "forecasts": {}, "note": _GF_NOTE}
+    gauges = await conn.get_gauges(_basin_bbox())
+    gauge_ids = [g.get("gaugeId") for g in (gauges or []) if g.get("gaugeId")]
+    if not gauge_ids:
+        return {"available": True, "forecasts": {}, "gauges": 0,
+                "note": "no gauges in basin bbox", "attribution": _GF_ATTR}
+    start = (_dt.datetime.utcnow() - _dt.timedelta(days=days_back)).strftime("%Y-%m-%d")
+    end = (_dt.datetime.utcnow() + _dt.timedelta(days=1)).strftime("%Y-%m-%d")
+    forecasts = await conn.query_gauge_forecasts(gauge_ids, start, end)
+    return {"available": True, "gauges": len(gauge_ids),
+            "window": {"issued_time_start": start, "issued_time_end": end},
+            "forecasts": forecasts or {}, "attribution": _GF_ATTR}
+
+
+@router.get("/basin/google-thresholds")
+async def googleflood_thresholds() -> dict[str, Any]:
+    """Google's OFFICIAL gauge-model thresholds (warning/danger/extreme) for
+    the basin's gauges — an independent cross-check against our Weibull-fitted
+    return-period thresholds (see /basin/thresholds). Honest unavailable until
+    keyed."""
+    conn = _googleflood()
+    if conn is None:
+        return {"available": False, "gauge_models": [], "note": _GF_NOTE}
+    gauges = await conn.get_gauges(_basin_bbox())
+    gauge_ids = [g.get("gaugeId") for g in (gauges or []) if g.get("gaugeId")]
+    if not gauge_ids:
+        return {"available": True, "gauge_models": [], "gauges": 0,
+                "note": "no gauges in basin bbox", "attribution": _GF_ATTR}
+    models = await conn.get_gauge_models(gauge_ids)
+    return {"available": True, "gauges": len(gauge_ids),
+            "gauge_models": models or [], "attribution": _GF_ATTR}
+
+
+@router.get("/hazards/googleflood/significant-events")
+async def googleflood_significant_events(region_code: str = "") -> dict[str, Any]:
+    """Clustered major flood events (area + population impact) — the pulsing
+    red circles on Flood Hub. Honest unavailable until keyed."""
+    conn = _googleflood()
+    if conn is None:
+        return {"available": False, "events": [], "note": _GF_NOTE}
+    events = await conn.get_significant_events(region_code=region_code)
+    return {"available": True, "events": events or [],
+            "live": events is not None, "attribution": _GF_ATTR}
+
+
+@router.get("/hazards/googleflood/flash-floods")
+async def googleflood_flash_floods(region_code: str = "") -> dict[str, Any]:
+    """Urban flash-flood events (24h probability per urban region). Honest
+    unavailable until keyed."""
+    conn = _googleflood()
+    if conn is None:
+        return {"available": False, "events": [], "note": _GF_NOTE}
+    events = await conn.get_flash_floods(region_code=region_code)
+    return {"available": True, "events": events or [],
+            "live": events is not None, "attribution": _GF_ATTR}
+
+
 @router.get("/alerts/{alert_id}/cap.xml")
 async def alert_cap_xml(alert_id: str) -> Response:
     """A dispatched alert rendered as CAP 1.2 XML (agency dissemination)."""
